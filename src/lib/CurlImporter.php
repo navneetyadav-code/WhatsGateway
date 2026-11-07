@@ -163,6 +163,24 @@ class CurlImporter
             }
         }
 
+        // Ensure browser persona headers so free hosting anti-bot systems do not reject automated calls
+        $hasUa = false;
+        $hasAccept = false;
+        foreach ($headers as $k => $v) {
+            if (strcasecmp((string) $k, 'User-Agent') === 0) {
+                $hasUa = true;
+            }
+            if (strcasecmp((string) $k, 'Accept') === 0) {
+                $hasAccept = true;
+            }
+        }
+        if (!$hasUa) {
+            $headers['User-Agent'] = AntiBotBypass::BROWSER_USER_AGENT;
+        }
+        if (!$hasAccept) {
+            $headers['Accept'] = 'application/json, text/plain, */*';
+        }
+
         return [
             'tool_slug' => $slugCandidate,
             'display_name' => $displayTitle,

@@ -163,7 +163,8 @@ if ($category === 'rest_api') {
             $hasCookie = false;
             foreach ($formattedHeaders as $h) {
                 if (stripos($h, 'Cookie:') === 0) {
-                    $retryHeaders[] = $h . "; __test={$solvedCookie}";
+                    $rawCookieVal = trim(substr($h, 7));
+                    $retryHeaders[] = 'Cookie: ' . AntiBotBypass::injectOrReplaceCookie($rawCookieVal, $solvedCookie);
                     $hasCookie = true;
                 } elseif (stripos($h, 'User-Agent:') === 0) {
                     $retryHeaders[] = 'User-Agent: ' . AntiBotBypass::BROWSER_USER_AGENT;
@@ -305,12 +306,26 @@ if ($category === 'rest_api') {
             AntiBotBypass::setCachedCookie($targetUrl, $solvedCookie);
             AntiBotBypass::activateCookie($targetUrl, $solvedCookie);
 
-            $headers[] = "Cookie: __test={$solvedCookie}";
+            $retryHeaders = [];
+            $hasCookie = false;
+            foreach ($headers as $h) {
+                if (stripos($h, 'Cookie:') === 0) {
+                    $rawCookieVal = trim(substr($h, 7));
+                    $retryHeaders[] = 'Cookie: ' . AntiBotBypass::injectOrReplaceCookie($rawCookieVal, $solvedCookie);
+                    $hasCookie = true;
+                } else {
+                    $retryHeaders[] = $h;
+                }
+            }
+            if (!$hasCookie) {
+                $retryHeaders[] = "Cookie: __test={$solvedCookie}";
+            }
+
             $chRetry = curl_init($targetUrl);
             curl_setopt($chRetry, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($chRetry, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($chRetry, CURLOPT_TIMEOUT, 12);
-            curl_setopt($chRetry, CURLOPT_HTTPHEADER, $headers);
+            curl_setopt($chRetry, CURLOPT_HTTPHEADER, $retryHeaders);
             $retryBody = curl_exec($chRetry);
             $retryCode = curl_getinfo($chRetry, CURLINFO_HTTP_CODE);
             curl_close($chRetry);

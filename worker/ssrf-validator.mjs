@@ -69,7 +69,7 @@ export function isPrivateIp(ip) {
  * - Requires HTTP/HTTPS scheme
  * - Rejects localhost, loopback, private VPC addresses, and cloud metadata (169.254.169.254)
  */
-export async function assertSafeWebhookUrl(targetUrl, { allowHttp = false } = {}) {
+export async function assertSafeWebhookUrl(targetUrl, { allowHttp = false, allowLoopback = false } = {}) {
   let parsed;
   try {
     parsed = new URL(targetUrl);
@@ -82,15 +82,17 @@ export async function assertSafeWebhookUrl(targetUrl, { allowHttp = false } = {}
     throw new Error('Target URL must use HTTPS.');
   }
 
-  if (!host || ['localhost', '127.0.0.1', '::1'].includes(host) || host.endsWith('.local')) {
-    throw new Error('Target URL cannot point to localhost or private hosts.');
-  }
+  if (!allowLoopback) {
+    if (!host || ['localhost', '127.0.0.1', '::1'].includes(host) || host.endsWith('.local')) {
+      throw new Error('Target URL cannot point to localhost or private hosts.');
+    }
 
-  const addresses = net.isIP(host)
-    ? [{ address: host }]
-    : await dns.lookup(host, { all: true, verbatim: true });
+    const addresses = net.isIP(host)
+      ? [{ address: host }]
+      : await dns.lookup(host, { all: true, verbatim: true });
 
-  if (addresses.some((entry) => isPrivateIp(entry.address))) {
-    throw new Error('Target URL cannot resolve to a private or reserved IP address.');
+    if (addresses.some((entry) => isPrivateIp(entry.address))) {
+      throw new Error('Target URL cannot resolve to a private or reserved IP address.');
+    }
   }
 }

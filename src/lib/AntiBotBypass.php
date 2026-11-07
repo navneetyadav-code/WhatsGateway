@@ -14,7 +14,7 @@ class AntiBotBypass
     public static function isChallenge(string $body): bool
     {
         return (str_contains($body, 'aes.js') || str_contains($body, 'slowAES') || str_contains($body, 'toNumbers'))
-            && (bool) preg_match('/toNumbers\("([0-9a-fA-F]+)"\)/i', $body);
+            && (bool) preg_match('/toNumbers\s*\(\s*["\']([0-9a-fA-F]+)["\']\s*\)/i', $body);
     }
 
     /**
@@ -22,9 +22,9 @@ class AntiBotBypass
      */
     public static function solveChallenge(string $html): ?string
     {
-        if (!preg_match('/a=toNumbers\("([0-9a-fA-F]+)"\)/i', $html, $mA) ||
-            !preg_match('/b=toNumbers\("([0-9a-fA-F]+)"\)/i', $html, $mB) ||
-            !preg_match('/c=toNumbers\("([0-9a-fA-F]+)"\)/i', $html, $mC)) {
+        if (!preg_match('/(?:var\s+)?a\s*=\s*toNumbers\s*\(\s*["\']([0-9a-fA-F]+)["\']\s*\)/i', $html, $mA) ||
+            !preg_match('/(?:var\s+)?b\s*=\s*toNumbers\s*\(\s*["\']([0-9a-fA-F]+)["\']\s*\)/i', $html, $mB) ||
+            !preg_match('/(?:var\s+)?c\s*=\s*toNumbers\s*\(\s*["\']([0-9a-fA-F]+)["\']\s*\)/i', $html, $mC)) {
             return null;
         }
 
@@ -61,6 +61,32 @@ class AntiBotBypass
         if ($host) {
             self::$cookieCache[$host] = $cookie;
         }
+    }
+
+    /**
+     * Clears cached cookie for the given target URL host.
+     */
+    public static function clearCachedCookie(string $url): void
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+        if ($host && isset(self::$cookieCache[$host])) {
+            unset(self::$cookieCache[$host]);
+        }
+    }
+
+    /**
+     * Injects or cleanly updates __test cookie in a Cookie header string.
+     */
+    public static function injectOrReplaceCookie(string $existingCookieHeader, string $cookieValue): string
+    {
+        if (preg_match('/(__test=)[^;]*/', $existingCookieHeader)) {
+            return (string) preg_replace('/(__test=)[^;]*/', '${1}' . $cookieValue, $existingCookieHeader);
+        }
+        $trimmed = trim($existingCookieHeader);
+        if ($trimmed !== '') {
+            return rtrim($trimmed, ';') . "; __test={$cookieValue}";
+        }
+        return "__test={$cookieValue}";
     }
 
     /**
