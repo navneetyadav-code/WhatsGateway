@@ -854,6 +854,16 @@ async function executeCustomRestApi(executionConfig, args = {}) {
     }
   }
 
+  // Shared hosting defense: If an Authorization header is present, mirror it to X-Api-Key
+  // because Apache/FastCGI on free shared hosts strips the standard Authorization header.
+  const rawAuth = headers['Authorization'] || headers['authorization'] || '';
+  if (rawAuth && !headers['X-Api-Key'] && !headers['x-api-key']) {
+    const bearerMatch = rawAuth.match(/Bearer\s+(.+)/i);
+    if (bearerMatch) {
+      headers['X-Api-Key'] = bearerMatch[1].trim();
+    }
+  }
+
   // Pre-seed cached anti-bot cookie if available for this domain
   try {
     const domain = new URL(finalUrl).hostname;
@@ -869,15 +879,39 @@ async function executeCustomRestApi(executionConfig, args = {}) {
     signal: AbortSignal.timeout(executionConfig.timeout_ms || 10000)
   };
 
-  // 2. Attach JSON body for write methods
+  // 2. Attach body for write methods (JSON or x-www-form-urlencoded)
   if (['POST', 'PUT', 'PATCH'].includes(method)) {
-    if (!headers['Content-Type'] && !headers['content-type']) {
+    let contentType = headers['Content-Type'] || headers['content-type'] || '';
+    if (!contentType) {
+      contentType = 'application/json';
       headers['Content-Type'] = 'application/json';
     }
-    if (executionConfig.body_template) {
-      reqOptions.body = JSON.stringify(interpolateVariables(executionConfig.body_template, args, false));
+
+    const rawPayload = executionConfig.body_template
+      ? interpolateVariables(executionConfig.body_template, args, false)
+      : args;
+
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      if (typeof rawPayload === 'string') {
+        reqOptions.body = rawPayload;
+      } else if (rawPayload && typeof rawPayload === 'object') {
+        const formParams = new URLSearchParams();
+        for (const [k, v] of Object.entries(rawPayload)) {
+          if (typeof v === 'boolean') {
+            formParams.append(k, v ? '1' : '0');
+          } else if (v !== undefined && v !== null) {
+            const strVal = String(v).trim();
+            if (strVal.toLowerCase() === 'true') formParams.append(k, '1');
+            else if (strVal.toLowerCase() === 'false') formParams.append(k, '0');
+            else formParams.append(k, strVal);
+          }
+        }
+        reqOptions.body = formParams.toString();
+      }
     } else {
-      reqOptions.body = JSON.stringify(args);
+      reqOptions.body = typeof rawPayload === 'string'
+        ? rawPayload
+        : JSON.stringify(rawPayload);
     }
   }
 
@@ -893,6 +927,16 @@ async function executeCustomRestApi(executionConfig, args = {}) {
         res = await fetch(finalUrl, reqOptions);
         rawText = await res.text();
       }
+    }
+
+    // Safety guard: If still an unresolved anti-bot challenge, do NOT treat as success
+    if (isAntiBotChallenge(rawText)) {
+      return {
+        status: 403,
+        success: false,
+        error: 'Target host anti-bot challenge was not accepted. Ensure host allows automated API traffic.',
+        details: { challenge: true }
+      };
     }
 
     let responseData = null;
