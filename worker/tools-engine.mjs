@@ -854,15 +854,7 @@ async function executeCustomRestApi(executionConfig, args = {}) {
     }
   }
 
-  // Shared hosting defense: If an Authorization header is present, mirror it to X-Api-Key
-  // because Apache/FastCGI on free shared hosts strips the standard Authorization header.
   const rawAuth = headers['Authorization'] || headers['authorization'] || '';
-  if (rawAuth && !headers['X-Api-Key'] && !headers['x-api-key']) {
-    const bearerMatch = rawAuth.match(/Bearer\s+(.+)/i);
-    if (bearerMatch) {
-      headers['X-Api-Key'] = bearerMatch[1].trim();
-    }
-  }
 
   // Pre-seed cached anti-bot cookie if available for this domain
   try {
@@ -924,6 +916,14 @@ async function executeCustomRestApi(executionConfig, args = {}) {
       const solved = await resolveProxyCookie(finalUrl, true, rawText);
       if (solved) {
         reqOptions.headers = injectOrReplaceTestCookie(reqOptions.headers, solved);
+        // If an anti-bot challenge occurred, the remote host is free shared hosting;
+        // mirror Authorization to X-Api-Key if not already present.
+        if (rawAuth && !reqOptions.headers['X-Api-Key'] && !reqOptions.headers['x-api-key']) {
+          const match = rawAuth.match(/Bearer\s+(.+)/i);
+          if (match) {
+            reqOptions.headers['X-Api-Key'] = match[1].trim();
+          }
+        }
         res = await fetch(finalUrl, reqOptions);
         rawText = await res.text();
       }
@@ -937,6 +937,21 @@ async function executeCustomRestApi(executionConfig, args = {}) {
         error: 'Target host anti-bot challenge was not accepted. Ensure host allows automated API traffic.',
         details: { challenge: true }
       };
+    }
+
+    // Dynamic Apache FastCGI Authorization Fallback (Zero Hardcoded Domains):
+    // If the remote server rejected Bearer authorization (401 or 403), retry once with X-Api-Key
+    // in case an Apache/FastCGI proxy stripped the standard Authorization header.
+    if ((res.status === 401 || res.status === 403) && rawAuth && !reqOptions.headers['X-Api-Key'] && !reqOptions.headers['x-api-key']) {
+      const match = rawAuth.match(/Bearer\s+(.+)/i);
+      if (match) {
+        reqOptions.headers['X-Api-Key'] = match[1].trim();
+        const retryRes = await fetch(finalUrl, reqOptions);
+        if (retryRes.ok) {
+          res = retryRes;
+          rawText = await retryRes.text();
+        }
+      }
     }
 
     let responseData = null;
