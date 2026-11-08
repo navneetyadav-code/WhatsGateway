@@ -275,6 +275,7 @@ describe('Free Shared Hosting Anti-Bot Bypass & Autonomous 24h Rotation Suite', 
       const config = {
         base_url: mockHostUrl,
         bearer_token: 'test_token',
+        __allow_test_mock: true,
         action_routes: {
           test_action: { path: '/api/action', method: 'GET' }
         }

@@ -330,6 +330,363 @@ function validate_webhook_url(?string $url): ?string
     return $url;
 }
 
+/**
+ * Asserts that an outbound URL is safe to contact (SEC-01):
+ * - Scheme must be HTTP or HTTPS (or strictly HTTPS if $requireHttps is true)
+ * - Prohibits userinfo credentials (user:pass@host)
+ * - Prohibits loopback, local domains, cloud metadata services (169.254.169.254, 100.100.100.200, metadata.google.internal)
+ * - Resolves hostname via DNS (A and AAAA records) and validates every resolved IP address with is_private_ip()
+ *
+ * @param string $url The outbound URL to test
+ * @param bool $requireHttps If true, only HTTPS is accepted
+ * @param bool $allowLoopback If true, bypasses private IP check (useful for automated testing)
+ * @return array Parsed URL metadata and validated IP addresses
+ * @throws InvalidArgumentException When the URL violates security constraints
+ */
+function assert_safe_outbound_url(string $url, bool $requireHttps = false, bool $allowLoopback = false): array
+{
+    $url = trim($url);
+    if ($url === '') {
+        throw new InvalidArgumentException('Outbound URL cannot be empty.');
+    }
+
+    if (!filter_var($url, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url)) {
+        throw new InvalidArgumentException('Invalid outbound URL provided. Only HTTP and HTTPS schemes are supported.');
+    }
+
+    $parts = parse_url($url);
+    if ($parts === false || !isset($parts['host'])) {
+        throw new InvalidArgumentException('Malformed outbound URL.');
+    }
+
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        throw new InvalidArgumentException('Outbound URL must use HTTP or HTTPS.');
+    }
+
+    if ($requireHttps && $scheme !== 'https') {
+        throw new InvalidArgumentException('Outbound URL must use HTTPS.');
+    }
+
+    if (isset($parts['user']) || isset($parts['pass'])) {
+        throw new InvalidArgumentException('Outbound URL must not contain embedded user credentials.');
+    }
+
+    $host = strtolower((string) $parts['host']);
+    $cleanHost = trim($host, '[]');
+    if ($cleanHost === '') {
+        throw new InvalidArgumentException('Outbound URL host cannot be empty.');
+    }
+
+    $port = isset($parts['port']) ? (int) $parts['port'] : ($scheme === 'https' ? 443 : 80);
+    if ($port <= 0 || $port > 65535) {
+        throw new InvalidArgumentException('Invalid port specified in outbound URL.');
+    }
+
+    if (!$allowLoopback) {
+        if (in_array($cleanHost, ['localhost', '127.0.0.1', '::1', '0.0.0.0', '::'], true)
+            || str_ends_with($cleanHost, '.local')
+            || str_ends_with($cleanHost, '.localhost')
+            || str_ends_with($cleanHost, '.internal')
+        ) {
+            throw new InvalidArgumentException('Outbound URL cannot point to localhost or local domains.');
+        }
+
+        if (str_starts_with($cleanHost, '169.254.')
+            || $cleanHost === 'metadata.google.internal'
+            || $cleanHost === '100.100.100.200'
+        ) {
+            throw new InvalidArgumentException('Outbound URL cannot point to cloud metadata endpoints.');
+        }
+    }
+
+    $addresses = [];
+    if (filter_var($cleanHost, FILTER_VALIDATE_IP)) {
+        $addresses[] = $cleanHost;
+    } else {
+        $records = dns_get_record($cleanHost, DNS_A | DNS_AAAA) ?: [];
+        foreach ($records as $r) {
+            $addr = $r['ip'] ?? $r['ipv6'] ?? null;
+            if ($addr) {
+                $addresses[] = $addr;
+            }
+        }
+
+        if (empty($addresses)) {
+            $v4List = gethostbynamel($cleanHost);
+            if (is_array($v4List)) {
+                $addresses = array_merge($addresses, $v4List);
+            }
+        }
+    }
+
+    if (empty($addresses)) {
+        throw new InvalidArgumentException('Could not resolve hostname for outbound URL.');
+    }
+
+    if (!$allowLoopback) {
+        foreach ($addresses as $ip) {
+            if (is_private_ip($ip)) {
+                throw new InvalidArgumentException('Outbound URL cannot resolve to a private or reserved network IP address.');
+            }
+        }
+    }
+
+    return [
+        'url' => $url,
+        'scheme' => $scheme,
+        'host' => $host,
+        'clean_host' => $cleanHost,
+        'port' => $port,
+        'resolved_ips' => $addresses,
+        'primary_ip' => $addresses[0],
+    ];
+}
+
+/**
+ * Resolves a relative or absolute redirect URL against a base URL (SEC-01).
+ */
+function resolve_relative_url(string $base, string $rel): string
+{
+    $rel = trim($rel);
+    if ($rel === '') {
+        return $base;
+    }
+
+    if (parse_url($rel, PHP_URL_SCHEME) !== null) {
+        return $rel;
+    }
+
+    $baseParts = parse_url($base);
+    if (!isset($baseParts['scheme']) || !isset($baseParts['host'])) {
+        return $rel;
+    }
+
+    $scheme = strtolower((string) $baseParts['scheme']);
+    $host = (string) $baseParts['host'];
+    $port = isset($baseParts['port']) ? ':' . $baseParts['port'] : '';
+
+    if (str_starts_with($rel, '//')) {
+        return "{$scheme}:{$rel}";
+    }
+
+    if (str_starts_with($rel, '/')) {
+        return "{$scheme}://{$host}{$port}{$rel}";
+    }
+
+    $basePath = (string) ($baseParts['path'] ?? '/');
+    $dir = preg_replace('#/[^/]*$#', '', $basePath);
+    $dir = $dir === '' ? '' : $dir;
+
+    return "{$scheme}://{$host}{$port}{$dir}/{$rel}";
+}
+
+/**
+ * Executes a hardened outbound HTTP/HTTPS cURL request with multi-layer SSRF defenses (SEC-01):
+ * 1. Pre-flight URL & IP validation against private/loopback/cloud-metadata networks
+ * 2. DNS rebinding prevention via CURLOPT_RESOLVE IP pinning & post-connection primary IP validation
+ * 3. Manual redirect following (CURLOPT_FOLLOWLOCATION is disabled) with re-validation of each hop
+ * 4. Response size bounds and execution timeouts to prevent resource exhaustion
+ *
+ * @param string $url The destination URL
+ * @param array $options Request options (method, headers, body, timeout, connect_timeout, max_bytes, allow_loopback, require_https, curl_options)
+ * @param int $maxRedirects Maximum number of redirect hops to follow (default 3)
+ * @return array ['ok' => bool, 'status' => int, 'body' => string, 'headers' => array, 'final_url' => string, 'primary_ip' => string, 'error' => string]
+ * @throws InvalidArgumentException|RuntimeException on SSRF or security constraint violations
+ */
+function safe_curl_request(string $url, array $options = [], int $maxRedirects = 3): array
+{
+    $currentUrl = $url;
+    $redirectCount = 0;
+    $visitedUrls = [];
+
+    $method = strtoupper(trim((string) ($options['method'] ?? 'GET')));
+    $timeout = max(1, min(60, (int) ($options['timeout'] ?? 12)));
+    $connectTimeout = max(1, min(30, (int) ($options['connect_timeout'] ?? 5)));
+    $maxBytes = max(1024, (int) ($options['max_bytes'] ?? 5242880)); // Default 5MB
+    $allowLoopback = (bool) ($options['allow_loopback'] ?? false);
+    $requireHttps = (bool) ($options['require_https'] ?? false);
+    $body = $options['body'] ?? null;
+
+    // Normalize headers
+    $rawHeaders = $options['headers'] ?? [];
+    $headersList = [];
+    $hasContentType = false;
+    if (is_array($rawHeaders)) {
+        foreach ($rawHeaders as $k => $v) {
+            if (is_int($k)) {
+                $headersList[] = (string) $v;
+                if (stripos((string) $v, 'Content-Type:') === 0) {
+                    $hasContentType = true;
+                }
+            } else {
+                $headersList[] = "{$k}: {$v}";
+                if (strcasecmp((string) $k, 'Content-Type') === 0) {
+                    $hasContentType = true;
+                }
+            }
+        }
+    }
+
+    $postPayload = null;
+    if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+        if (is_array($body)) {
+            if (!$hasContentType) {
+                $headersList[] = 'Content-Type: application/json';
+                $hasContentType = true;
+            }
+            $postPayload = json_encode($body);
+        } elseif ($body !== null) {
+            $postPayload = (string) $body;
+        }
+    }
+
+    $finalHttpCode = 0;
+    $finalPrimaryIp = '';
+    $finalError = '';
+    $finalBody = '';
+    $finalHeaders = [];
+
+    while (true) {
+        $meta = assert_safe_outbound_url($currentUrl, $requireHttps, $allowLoopback);
+        $visitedUrls[] = $currentUrl;
+
+        $ch = curl_init($currentUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false); // Mandatory: manual redirect handling
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        curl_setopt($ch, CURLOPT_HEADER, true);
+
+        // Anti-DNS-rebinding IP pinning with CURLOPT_RESOLVE
+        $pinnedIp = $meta['primary_ip'] ?? null;
+        $cleanHost = $meta['clean_host'] ?? '';
+        $port = $meta['port'] ?? ($meta['scheme'] === 'https' ? 443 : 80);
+        if ($pinnedIp && $cleanHost && !filter_var($cleanHost, FILTER_VALIDATE_IP)) {
+            curl_setopt($ch, CURLOPT_RESOLVE, ["{$cleanHost}:{$port}:{$pinnedIp}"]);
+        }
+
+        // Apply headers
+        if (!empty($headersList)) {
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headersList);
+        }
+
+        // Method and payload
+        if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            if ($postPayload !== null) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $postPayload);
+            }
+        } else {
+            curl_setopt($ch, CURLOPT_HTTPGET, true);
+        }
+
+        // Memory exhaustion guard: bound response size via progress function
+        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+        curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, static function ($resource, $dlSize, $downloaded) use ($maxBytes): int {
+            if ($downloaded > $maxBytes || $dlSize > $maxBytes) {
+                return 1; // Abort download immediately
+            }
+            return 0;
+        });
+
+        // Custom cURL options if provided
+        if (!empty($options['curl_options']) && is_array($options['curl_options'])) {
+            foreach ($options['curl_options'] as $optKey => $optVal) {
+                if ($optKey !== CURLOPT_FOLLOWLOCATION) {
+                    curl_setopt($ch, $optKey, $optVal);
+                }
+            }
+        }
+
+        $rawResponse = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $primaryIp = (string) curl_getinfo($ch, CURLINFO_PRIMARY_IP);
+        $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        // Post-connection validation of connected IP to defeat TOCTOU / DNS rebinding
+        if (!$allowLoopback && $primaryIp !== '' && is_private_ip($primaryIp)) {
+            throw new RuntimeException('Outbound connection destination resolved to a private or restricted network IP address.');
+        }
+
+        $finalHttpCode = $httpCode;
+        $finalPrimaryIp = $primaryIp;
+        $finalError = $curlError;
+
+        if ($rawResponse === false) {
+            $finalBody = '';
+            break;
+        }
+
+        $headerContent = substr($rawResponse, 0, $headerSize);
+        $bodyContent = substr($rawResponse, $headerSize);
+
+        // Check for HTTP redirects
+        if (in_array($httpCode, [301, 302, 303, 307, 308], true)) {
+            if ($redirectCount >= $maxRedirects) {
+                throw new RuntimeException("Maximum redirect limit ({$maxRedirects}) exceeded.");
+            }
+
+            $location = null;
+            foreach (explode("
+", $headerContent) as $line) {
+                if (stripos($line, 'Location:') === 0) {
+                    $location = trim(substr($line, 9));
+                    break;
+                }
+            }
+
+            if ($location === null || $location === '') {
+                // Redirect without Location header - treat as final response
+                $finalBody = $bodyContent;
+                break;
+            }
+
+            $nextUrl = resolve_relative_url($currentUrl, $location);
+
+            if (in_array($nextUrl, $visitedUrls, true)) {
+                throw new RuntimeException('Circular redirect loop detected in outbound request.');
+            }
+
+            // In 301/302/303, transform POST to GET per HTTP specification
+            if (in_array($httpCode, [301, 302, 303], true) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+                $method = 'GET';
+                $postPayload = null;
+            }
+
+            $currentUrl = $nextUrl;
+            $redirectCount++;
+            continue;
+        }
+
+        $finalBody = $bodyContent;
+
+        // Parse response headers into assoc array
+        foreach (explode("
+", $headerContent) as $hLine) {
+            if (str_contains($hLine, ':')) {
+                [$hk, $hv] = explode(':', $hLine, 2);
+                $finalHeaders[trim($hk)] = trim($hv);
+            }
+        }
+        break;
+    }
+
+    return [
+        'ok' => ($finalHttpCode >= 200 && $finalHttpCode < 400),
+        'status' => $finalHttpCode,
+        'body' => $finalBody,
+        'headers' => $finalHeaders,
+        'final_url' => $currentUrl,
+        'primary_ip' => $finalPrimaryIp,
+        'error' => $finalError,
+    ];
+}
+
 function seo_meta(?string $page): array {
     $baseUrl = rtrim((string) app_config('app.public_url'), '/');
     $defaults = [

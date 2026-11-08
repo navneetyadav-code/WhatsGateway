@@ -779,6 +779,27 @@ if ($page === 'custom-tool-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
     }
 
+    // SEC-01: Validate target URLs against SSRF before persisting to database
+    try {
+        if ($category === 'rest_api') {
+            $sampleUrl = (string) preg_replace('/\{[^}]+\}/', 'test', $executionConfig['url'] ?? '');
+            if ($sampleUrl !== '') {
+                assert_safe_outbound_url($sampleUrl);
+            }
+        } elseif ($category === 'webhook') {
+            if (!empty($executionConfig['target_url'])) {
+                assert_safe_outbound_url($executionConfig['target_url'], true);
+            }
+        } elseif ($category === 'shared_env_api') {
+            if (!empty($executionConfig['base_url'])) {
+                assert_safe_outbound_url($executionConfig['base_url']);
+            }
+        }
+    } catch (InvalidArgumentException $e) {
+        flash('error', 'Security constraint failed: ' . $e->getMessage());
+        redirect_to('index.php?page=tools');
+    }
+
     // Preserve existing body_template if editing tool and body_template was not resubmitted
     if ($toolId > 0 && empty($executionConfig['body_template'])) {
         $existingStmt = $pdo->prepare('SELECT execution_config FROM ai_custom_tools WHERE id = ? AND user_id = ? LIMIT 1');

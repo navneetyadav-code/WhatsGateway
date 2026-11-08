@@ -82,7 +82,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             json_response(['ok' => true]);
         }
 
-        $userId = (int) $user['id'];
+        $targetUserId = (int) $user['id'];
+        $userId = $targetUserId;
         $phone = $user['phone'] ?? '';
         $otp = sprintf('%06d', random_int(0, 999999));
 
@@ -90,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("DELETE FROM password_resets WHERE email = ?")->execute([$email]);
 
         $stmt = $pdo->prepare("INSERT INTO password_resets (email, phone, otp, expires_at) VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))");
-        $stmt->execute([$email, $phone, $otp]);
+        $stmt->execute([$email, $phone, hash('sha256', $otp)]);
 
         $viaEmail = app_config('otp.via_email');
         $viaPhone = app_config('otp.via_phone');
@@ -134,13 +135,17 @@ It expires in 15 minutes.";
                 }
             }
 
-            if (!$userId) {
-                $stmtAny = Database::pdo()->query(
-                    "SELECT user_id FROM whatsapp_sessions WHERE status = 'connected' ORDER BY updated_at DESC LIMIT 1"
+            // SEC-04: Enforce strict tenant isolation for password reset OTP delivery.
+            // Check if the user requesting the reset has their own connected session (self-hosted / personal instance).
+            // Arbitrary cross-tenant session lookups are strictly prohibited.
+            if (!$userId && $targetUserId > 0) {
+                $stmtSelf = Database::pdo()->prepare(
+                    "SELECT user_id FROM whatsapp_sessions WHERE user_id = ? AND status = 'connected' LIMIT 1"
                 );
-                $anyRow = $stmtAny ? $stmtAny->fetch() : null;
-                if ($anyRow) {
-                    $userId = (int) $anyRow['user_id'];
+                $stmtSelf->execute([$targetUserId]);
+                $selfRow = $stmtSelf->fetch();
+                if ($selfRow) {
+                    $userId = (int) $selfRow['user_id'];
                 }
             }
 
@@ -204,7 +209,9 @@ It expires in 15 minutes.";
         $stmt->execute([$email]);
         $reset = $stmt->fetch();
 
-        if (!$reset || !hash_equals((string) $reset['otp'], $otp)) {
+        $submittedHash = hash('sha256', $otp);
+        $isValidOtp = $reset && (hash_equals((string) $reset['otp'], $submittedHash) || hash_equals((string) $reset['otp'], $otp));
+        if (!$reset || !$isValidOtp) {
             record_failed_login($email);
 
             $stmtCount = $pdo->prepare("SELECT COUNT(*) FROM login_attempts WHERE email = ? AND attempted_at >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)");

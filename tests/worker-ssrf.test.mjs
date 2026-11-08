@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'net';
+import { assertSafeWebhookUrl } from '../worker/ssrf-validator.mjs';
+import { executeSharedEnvApi } from '../worker/tools-engine.mjs';
 
 // Test isPrivateIp logic matching worker/server.mjs
 function isPrivateIp(ip) {
@@ -87,4 +89,40 @@ test('worker permits legitimate public addresses', () => {
   assert.equal(isPrivateIp('8.8.8.8'), false);
   assert.equal(isPrivateIp('1.1.1.1'), false);
   assert.equal(isPrivateIp('142.250.190.46'), false);
+});
+
+
+test('assertSafeWebhookUrl blocks loopback, private IPs, and cloud metadata', async () => {
+  await assert.rejects(
+    async () => assertSafeWebhookUrl('http://127.0.0.1:8080/test', { allowHttp: true }),
+    /cannot point to localhost or private hosts/
+  );
+  await assert.rejects(
+    async () => assertSafeWebhookUrl('http://169.254.169.254/latest/meta-data/', { allowHttp: true }),
+    /cannot resolve to a private or reserved IP address/
+  );
+  await assert.rejects(
+    async () => assertSafeWebhookUrl('http://10.0.0.1/admin', { allowHttp: true }),
+    /cannot resolve to a private or reserved IP address/
+  );
+  await assert.rejects(
+    async () => assertSafeWebhookUrl('http://[::1]:3000/metrics', { allowHttp: true }),
+    /cannot point to localhost or private hosts/
+  );
+});
+
+test('executeSharedEnvApi rejects SSRF restricted targets (SEC-01)', async () => {
+  const result = await executeSharedEnvApi({
+    base_url: 'http://127.0.0.1:3000',
+    endpoint: '/health'
+  });
+  assert.equal(typeof result.error, 'string');
+  assert.match(result.error, /SSRF validation failed/);
+
+  const metaResult = await executeSharedEnvApi({
+    base_url: 'http://169.254.169.254',
+    endpoint: '/latest/meta-data/'
+  });
+  assert.equal(typeof metaResult.error, 'string');
+  assert.match(metaResult.error, /SSRF validation failed/);
 });

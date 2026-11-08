@@ -1654,14 +1654,17 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
             logger.warn({ err: kErr.message }, '[Worker] Failed to query ai_provider_keys fallback');
           }
 
-          // Environment variable fallbacks (e.g. Render dashboard environment variables)
-          if (!aiSettings.gemini_api_key && process.env.GEMINI_API_KEY) {
+          // SEC-10: Restrict shared server AI credentials.
+          // In multi-tenant environments, standard users must not consume the host server's AI quota.
+          // Only the instance admin/owner (userId === 1) or deployments explicitly opting in via ALLOW_GLOBAL_AI_FALLBACK may use global keys.
+          const canUseGlobalAiFallback = process.env.ALLOW_GLOBAL_AI_FALLBACK === 'true' || Number(userId) === 1;
+          if (canUseGlobalAiFallback && !aiSettings.gemini_api_key && process.env.GEMINI_API_KEY) {
             aiSettings.gemini_api_key = process.env.GEMINI_API_KEY;
           }
-          if (!aiSettings.groq_api_key && process.env.GROQ_API_KEY) {
+          if (canUseGlobalAiFallback && !aiSettings.groq_api_key && process.env.GROQ_API_KEY) {
             aiSettings.groq_api_key = process.env.GROQ_API_KEY;
           }
-          if (!aiSettings.openrouter_api_key && process.env.OPENROUTER_API_KEY) {
+          if (canUseGlobalAiFallback && !aiSettings.openrouter_api_key && process.env.OPENROUTER_API_KEY) {
             aiSettings.openrouter_api_key = process.env.OPENROUTER_API_KEY;
           }
           const isPersonalMode = aiSettings?.agent_mode === 'personal';
@@ -1690,7 +1693,19 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
           } catch (_) {}
 
           const cleanPhone = (senderPhone || '').replace(/[^\d]/g, '');
-          const isAdminCaller = adminPhones.length > 0 && adminPhones.some(p => p && (cleanPhone.endsWith(p) || p.endsWith(cleanPhone)));
+          // SEC-05: Prevent privilege escalation via suffix spoofing.
+          // Requires exact full number equality or matching full 10-digit national number.
+          // Insecure reverse suffix matching is eliminated to prevent short numbers from escalating to admin.
+          const isAdminCaller = adminPhones.length > 0 && adminPhones.some(p => {
+            if (!p || typeof p !== 'string') return false;
+            const adminP = p.replace(/[^\d]/g, '');
+            if (adminP.length < 8) return false;
+            if (cleanPhone === adminP) return true;
+            if (cleanPhone.length >= 10 && adminP.length >= 10 && cleanPhone.slice(-10) === adminP.slice(-10)) {
+              return true;
+            }
+            return false;
+          });
 
           // 6. Escalation & Frustration check
           // STRICT RESTRICTION: In Personal Assistant mode OR when communicating with the Admin/Boss,

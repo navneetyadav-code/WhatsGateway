@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 function create_api_key(int $userId, string $name = 'API key'): array
 {
+    // SEC-06: Formalize Single Bearer Token Model.
+    // The API token is a high-entropy 192-bit cryptographic secret token ('wa_live_...').
+    // It is stored at rest as a SHA-256 hash (key_hash) and serves as the sole authentication secret.
     $apiKey = 'wa_live_' . bin2hex(random_bytes(24));
-    $apiSecret = 'was_' . bin2hex(random_bytes(32));
+    $keyHash = hash('sha256', $apiKey);
 
     $stmt = Database::pdo()->prepare(
         'INSERT INTO api_keys (user_id, name, key_hash, key_prefix, secret_hash) VALUES (?, ?, ?, ?, ?)'
@@ -13,15 +16,15 @@ function create_api_key(int $userId, string $name = 'API key'): array
     $stmt->execute([
         $userId,
         trim($name) ?: 'API key',
-        hash('sha256', $apiKey),
+        $keyHash,
         substr($apiKey, 0, 22),
-        password_hash($apiSecret, PASSWORD_DEFAULT),
+        password_hash($apiKey, PASSWORD_DEFAULT),
     ]);
 
     return [
         'id' => (int) Database::pdo()->lastInsertId(),
         'api_key' => $apiKey,
-        'api_secret' => $apiSecret,
+        'api_secret' => $apiKey, // Backwards compatibility for callers inspecting credentials array
     ];
 }
 
@@ -72,8 +75,9 @@ function update_api_key_limits(int $userId, int $keyId, array $data): void
 
 function authenticate_api_request(): ?array
 {
+    // SEC-06: Single Bearer Token Model.
+    // The API token is a high-entropy 192-bit cryptographic secret token ('wa_live_...').
     $key = $_SERVER['HTTP_X_API_KEY'] ?? '';
-    $secret = !empty($_SERVER['HTTP_X_API_SECRET']) ? $_SERVER['HTTP_X_API_SECRET'] : null;
     $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 
     if (!$authorization && function_exists('apache_request_headers')) {
@@ -82,24 +86,16 @@ function authenticate_api_request(): ?array
         if (!$key) {
             $key = $headers['X-Api-Key'] ?? $headers['x-api-key'] ?? '';
         }
-        if (!$secret && !empty($headers['X-Api-Secret'])) {
-            $secret = $headers['X-Api-Secret'];
-        } elseif (!$secret && !empty($headers['x-api-secret'])) {
-            $secret = $headers['x-api-secret'];
-        }
     }
 
-    // If using Bearer authentication
+    // Single Bearer Token format (Authorization: Bearer <token>)
     if (!$key && str_starts_with($authorization, 'Bearer ')) {
         $token = substr($authorization, 7);
+        // Backwards compatibility: if legacy key:secret was passed, extract the key
         if (str_contains($token, ':')) {
-            // Backwards compatibility for key:secret format
-            [$key, $secret] = array_pad(explode(':', $token, 2), 2, null);
-        } else {
-            // Modern Single-Token format (API Key acts as the sole token)
-            $key = $token;
-            $secret = null; // Bypass secret validation
+            $token = explode(':', $token, 2)[0];
         }
+        $key = trim($token);
     }
 
     // Fallback: check POST body or guarded query params for single-key authentication
@@ -113,7 +109,7 @@ function authenticate_api_request(): ?array
             $key = $jsonData['api_key'] ?? $jsonData['key'] ?? $jsonData['access_token'] ?? '';
         }
 
-        // Priority 3: GET query parameter (SEC-07: Guarded to prevent log leakage; requires ALLOW_QUERY_AUTH=true)
+        // Priority 3: GET query parameter (Guarded to prevent log leakage; requires ALLOW_QUERY_AUTH=true)
         if (!$key && (bool) app_config('security.allow_query_auth', false)) {
             $key = $_GET['api_key'] ?? $_GET['key'] ?? $_GET['access_token'] ?? '';
         }
@@ -133,11 +129,6 @@ function authenticate_api_request(): ?array
     $apiKey = $stmt->fetch();
 
     if (!$apiKey || $apiKey['status'] !== 'active') {
-        return null;
-    }
-
-    // Only verify secret if it was explicitly provided (legacy dual-auth method)
-    if (!empty($secret) && !password_verify($secret, $apiKey['secret_hash'] ?? '')) {
         return null;
     }
 
@@ -165,29 +156,63 @@ function client_ip(): string
 {
     $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 
-    // Only inspect reverse-proxy headers if the direct connecting socket is a trusted proxy or loopback
-    $isProxy = in_array($remote, ['127.0.0.1', '::1'], true)
-        || str_starts_with($remote, '10.')
-        || (filter_var($remote, FILTER_VALIDATE_IP) !== false && filter_var($remote, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false)
-        || str_starts_with($remote, '192.168.');
+    // SEC-07: Configurable trusted proxies with safe default for container/loopback environments
+    $customProxies = app_config('security.trusted_proxies');
+    $isProxy = false;
+    if ($customProxies !== null && $customProxies !== '') {
+        $trustedList = array_filter(array_map('trim', explode(',', (string) $customProxies)));
+        $isProxy = in_array($remote, $trustedList, true);
+    } else {
+        $isProxy = in_array($remote, ['127.0.0.1', '::1'], true)
+            || str_starts_with($remote, '10.')
+            || (filter_var($remote, FILTER_VALIDATE_IP) !== false && filter_var($remote, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false)
+            || str_starts_with($remote, '192.168.');
+    }
 
     if ($isProxy) {
-        $headers = [
-            'HTTP_CF_CONNECTING_IP',
-            'HTTP_X_REAL_IP',
-            'HTTP_X_FORWARDED_FOR',
-            'HTTP_CLIENT_IP',
-        ];
+        // 1. Cloudflare Connecting IP (authenticated by edge)
+        if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+            $cfIp = trim((string) $_SERVER['HTTP_CF_CONNECTING_IP']);
+            if (filter_var($cfIp, FILTER_VALIDATE_IP)) {
+                return $cfIp;
+            }
+        }
 
-        foreach ($headers as $header) {
-            if (!empty($_SERVER[$header])) {
-                // X-Forwarded-For can contain a comma-separated list of IPs. The first one is the client.
-                $ips = explode(',', (string) $_SERVER[$header]);
-                $ip = trim($ips[0]);
+        // 2. X-Real-IP (set by Nginx proxy_set_header X-Real-IP $remote_addr)
+        if (!empty($_SERVER['HTTP_X_REAL_IP'])) {
+            $realIp = trim((string) $_SERVER['HTTP_X_REAL_IP']);
+            if (filter_var($realIp, FILTER_VALIDATE_IP)) {
+                return $realIp;
+            }
+        }
 
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
+        // 3. X-Forwarded-For: Right-to-left evaluation to prevent client header injection
+        if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $rawIps = array_filter(array_map('trim', explode(',', (string) $_SERVER['HTTP_X_FORWARDED_FOR'])));
+            if (!empty($rawIps)) {
+                // Traverse right-to-left, skipping intermediate private/reserved proxy hops
+                $selectedIp = null;
+                for ($i = count($rawIps) - 1; $i >= 0; $i--) {
+                    $candidate = $rawIps[$i];
+                    if (filter_var($candidate, FILTER_VALIDATE_IP)) {
+                        $selectedIp = $candidate;
+                        // Stop at the first non-private public IP
+                        if (function_exists('is_private_ip') && !is_private_ip($candidate)) {
+                            return $candidate;
+                        }
+                    }
                 }
+                if ($selectedIp !== null) {
+                    return $selectedIp;
+                }
+            }
+        }
+
+        // 4. Client-IP fallback
+        if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+            $clientIp = trim((string) $_SERVER['HTTP_CLIENT_IP']);
+            if (filter_var($clientIp, FILTER_VALIDATE_IP)) {
+                return $clientIp;
             }
         }
     }

@@ -95,18 +95,18 @@ class AntiBotBypass
     public static function activateCookie(string $targetUrl, string $cookieValue, int $timeout = 6): void
     {
         $activateUrl = str_contains($targetUrl, '?') ? "{$targetUrl}&i=1" : "{$targetUrl}?i=1";
-        $ch = curl_init($activateUrl);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_HTTPHEADER => [
-                'User-Agent: ' . self::BROWSER_USER_AGENT,
-                "Cookie: __test={$cookieValue}",
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            ]
-        ]);
-        curl_exec($ch);
-        curl_close($ch);
+        try {
+            safe_curl_request($activateUrl, [
+                'method' => 'GET',
+                'timeout' => $timeout,
+                'headers' => [
+                    'User-Agent: ' . self::BROWSER_USER_AGENT,
+                    "Cookie: __test={$cookieValue}",
+                    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            // Silently swallow SSRF or network errors during challenge activation attempt
+        }
     }
 }

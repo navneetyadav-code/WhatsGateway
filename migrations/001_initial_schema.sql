@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS `message_logs` (
 CREATE TABLE IF NOT EXISTS `password_resets` (
   `email` varchar(190) NOT NULL,
   `phone` varchar(20) NOT NULL,
-  `otp` varchar(6) NOT NULL,
+  `otp` varchar(64) NOT NULL,
   `expires_at` datetime NOT NULL,
   KEY `email` (`email`),
   KEY `phone` (`phone`)

@@ -54,8 +54,11 @@ if ($category === 'rest_api') {
         $finalUrl = str_replace('{' . $k . '}', $replacement, $finalUrl);
     }
 
-    if (!filter_var($finalUrl, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $finalUrl)) {
-        json_response(['ok' => false, 'error' => "Invalid URL protocol in: {$finalUrl}. Only HTTP/HTTPS permitted."], 422);
+    // SEC-01: Multi-layer SSRF validation against private/loopback/cloud-metadata networks
+    try {
+        assert_safe_outbound_url($finalUrl, false, false);
+    } catch (InvalidArgumentException $e) {
+        json_response(['ok' => false, 'error' => 'SSRF validation failed: ' . $e->getMessage()], 422);
     }
 
     $method = strtoupper((string) ($executionConfig['method'] ?? 'GET'));
@@ -66,7 +69,7 @@ if ($category === 'rest_api') {
     ];
     $hasExplicitCookie = false;
     foreach ($headers as $hk => $hv) {
-        if (strcasecmp($hk, 'Cookie') === 0) {
+        if (strcasecmp((string) $hk, 'Cookie') === 0) {
             $hasExplicitCookie = true;
         }
         $formattedHeaders[] = "{$hk}: {$hv}";
@@ -79,14 +82,8 @@ if ($category === 'rest_api') {
         }
     }
 
-    $ch = curl_init($finalUrl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $formattedHeaders);
-
+    $postPayload = null;
     if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
         $bodyData = $args;
         $rawTemplate = $executionConfig['body_template'] ?? null;
         if (is_string($rawTemplate)) {
@@ -120,7 +117,7 @@ if ($category === 'rest_api') {
 
         $isForm = false;
         foreach ($headers as $hk => $hv) {
-            if (strcasecmp($hk, 'Content-Type') === 0 && str_contains(strtolower($hv), 'application/x-www-form-urlencoded')) {
+            if (strcasecmp((string) $hk, 'Content-Type') === 0 && str_contains(strtolower((string) $hv), 'application/x-www-form-urlencoded')) {
                 $isForm = true;
                 break;
             }
@@ -129,28 +126,44 @@ if ($category === 'rest_api') {
         if ($isForm && is_array($bodyData)) {
             $formattedParams = [];
             foreach ($bodyData as $bk => $bv) {
-                if (is_bool($bv)) {
-                    $formattedParams[$bk] = $bv ? '1' : '0';
-                } else {
-                    $formattedParams[$bk] = $bv;
-                }
+                $formattedParams[$bk] = is_bool($bv) ? ($bv ? '1' : '0') : $bv;
             }
             $postPayload = http_build_query($formattedParams);
         } else {
-            if (!isset($headers['Content-Type']) && !isset($headers['content-type'])) {
+            $hasCT = false;
+            foreach ($formattedHeaders as $h) {
+                if (stripos($h, 'Content-Type:') === 0) {
+                    $hasCT = true;
+                    break;
+                }
+            }
+            if (!$hasCT) {
                 $formattedHeaders[] = 'Content-Type: application/json';
-                curl_setopt($ch, CURLOPT_HTTPHEADER, $formattedHeaders);
             }
             $postPayload = is_array($bodyData) ? json_encode($bodyData) : (string) $bodyData;
         }
-
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $postPayload);
     }
 
-    $responseBody = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    curl_close($ch);
+    try {
+        $curlResult = safe_curl_request($finalUrl, [
+            'method' => $method,
+            'headers' => $formattedHeaders,
+            'body' => $postPayload,
+            'timeout' => 12,
+        ]);
+    } catch (Throwable $e) {
+        json_response([
+            'ok' => false,
+            'status' => 0,
+            'latency_ms' => round((microtime(true) - $startTime) * 1000),
+            'error' => 'SSRF validation failed: ' . $e->getMessage()
+        ], 422);
+    }
+
+    $responseBody = $curlResult['body'];
+    $httpCode = $curlResult['status'];
+    $curlError = $curlResult['error'];
+    $finalUrl = $curlResult['final_url'];
 
     // Auto-detect and bypass anti-bot / aes.js challenges (InfinityFree, ByetHost, etc.)
     if (AntiBotBypass::isChallenge((string) $responseBody)) {
@@ -176,27 +189,21 @@ if ($category === 'rest_api') {
                 $retryHeaders[] = "Cookie: __test={$solvedCookie}";
             }
 
-            $chRetry = curl_init($finalUrl);
-            curl_setopt($chRetry, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($chRetry, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($chRetry, CURLOPT_TIMEOUT, 12);
-            curl_setopt($chRetry, CURLOPT_HTTPHEADER, $retryHeaders);
-            if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-                curl_setopt($chRetry, CURLOPT_CUSTOMREQUEST, $method);
-                if (isset($postPayload)) {
-                    curl_setopt($chRetry, CURLOPT_POSTFIELDS, $postPayload);
+            try {
+                $retryResult = safe_curl_request($finalUrl, [
+                    'method' => $method,
+                    'headers' => $retryHeaders,
+                    'body' => $postPayload,
+                    'timeout' => 12,
+                ]);
+
+                if (!$retryResult['error'] && $retryResult['body']) {
+                    $responseBody = $retryResult['body'];
+                    $httpCode = $retryResult['status'];
+                    $curlError = '';
                 }
-            }
-
-            $retryBody = curl_exec($chRetry);
-            $retryCode = curl_getinfo($chRetry, CURLINFO_HTTP_CODE);
-            $retryErr = curl_error($chRetry);
-            curl_close($chRetry);
-
-            if (!$retryErr && $retryBody) {
-                $responseBody = $retryBody;
-                $httpCode = $retryCode;
-                $curlError = '';
+            } catch (Throwable $e) {
+                // Terminate safely if challenge retry violates SSRF boundaries
             }
         }
     }
@@ -243,40 +250,67 @@ if ($category === 'rest_api') {
         json_response(['ok' => false, 'error' => 'Webhook target URL is missing.'], 422);
     }
 
-    $ch = curl_init($targetUrl);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'User-Agent: WhatsGateway-Webhook-Tester/3.0'
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+    // SEC-01: Multi-layer SSRF validation against private/loopback/cloud-metadata networks
+    try {
+        assert_safe_outbound_url($targetUrl, true);
+    } catch (InvalidArgumentException $e) {
+        json_response(['ok' => false, 'error' => 'SSRF validation failed: ' . $e->getMessage()], 422);
+    }
+
+    $payload = [
         'event' => 'tool_test',
         'timestamp' => date('c'),
         'payload' => $args
-    ]));
+    ];
 
-    $responseBody = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    try {
+        $curlResult = safe_curl_request($targetUrl, [
+            'method' => 'POST',
+            'headers' => [
+                'Content-Type: application/json',
+                'User-Agent: WhatsGateway-Webhook-Tester/3.0'
+            ],
+            'body' => $payload,
+            'timeout' => 10,
+            'require_https' => true,
+        ]);
+    } catch (Throwable $e) {
+        json_response([
+            'ok' => false,
+            'status' => 0,
+            'latency_ms' => round((microtime(true) - $startTime) * 1000),
+            'error' => 'SSRF validation failed: ' . $e->getMessage()
+        ], 422);
+    }
 
+    $responseBody = $curlResult['body'];
+    $httpCode = $curlResult['status'];
     $latencyMs = round((microtime(true) - $startTime) * 1000);
 
     json_response([
         'ok' => ($httpCode >= 200 && $httpCode < 400),
         'status' => $httpCode,
         'latency_ms' => $latencyMs,
-        'final_url' => $targetUrl,
+        'final_url' => $curlResult['final_url'],
         'data' => json_decode($responseBody ?: '', true) ?? $responseBody
     ]);
 } elseif ($category === 'shared_env_api') {
-    // Production API check
     $baseUrl = rtrim((string) ($executionConfig['base_url'] ?? ''), '/');
+    if ($baseUrl === '') {
+        json_response(['ok' => false, 'error' => 'Production Base URL is missing.'], 422);
+    }
     $token = trim((string) ($executionConfig['bearer_token'] ?? ''));
     $action = trim((string) ($args['action'] ?? 'health'));
 
     $targetUrl = $baseUrl . '/' . ltrim($action, '/');
+
+    // SEC-01: Multi-layer SSRF validation against private/loopback/cloud-metadata networks
+    try {
+        assert_safe_outbound_url($targetUrl);
+    } catch (InvalidArgumentException $e) {
+        json_response(['ok' => false, 'error' => 'SSRF validation failed: ' . $e->getMessage()], 422);
+    }
+
     $headers = [
         'Accept: application/json',
         'User-Agent: ' . AntiBotBypass::BROWSER_USER_AGENT
@@ -290,15 +324,24 @@ if ($category === 'rest_api') {
         $headers[] = "Cookie: __test={$cachedCookie}";
     }
 
-    $ch = curl_init($targetUrl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    try {
+        $curlResult = safe_curl_request($targetUrl, [
+            'method' => 'GET',
+            'headers' => $headers,
+            'timeout' => 12,
+        ]);
+    } catch (Throwable $e) {
+        json_response([
+            'ok' => false,
+            'status' => 0,
+            'latency_ms' => round((microtime(true) - $startTime) * 1000),
+            'error' => 'SSRF validation failed: ' . $e->getMessage()
+        ], 422);
+    }
 
-    $responseBody = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    $responseBody = $curlResult['body'];
+    $httpCode = $curlResult['status'];
+    $finalUrl = $curlResult['final_url'];
 
     if (AntiBotBypass::isChallenge((string) $responseBody)) {
         $solvedCookie = AntiBotBypass::solveChallenge((string) $responseBody);
@@ -321,18 +364,18 @@ if ($category === 'rest_api') {
                 $retryHeaders[] = "Cookie: __test={$solvedCookie}";
             }
 
-            $chRetry = curl_init($targetUrl);
-            curl_setopt($chRetry, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($chRetry, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($chRetry, CURLOPT_TIMEOUT, 12);
-            curl_setopt($chRetry, CURLOPT_HTTPHEADER, $retryHeaders);
-            $retryBody = curl_exec($chRetry);
-            $retryCode = curl_getinfo($chRetry, CURLINFO_HTTP_CODE);
-            curl_close($chRetry);
-
-            if ($retryBody) {
-                $responseBody = $retryBody;
-                $httpCode = $retryCode;
+            try {
+                $retryResult = safe_curl_request($targetUrl, [
+                    'method' => 'GET',
+                    'headers' => $retryHeaders,
+                    'timeout' => 12,
+                ]);
+                if ($retryResult['body']) {
+                    $responseBody = $retryResult['body'];
+                    $httpCode = $retryResult['status'];
+                }
+            } catch (Throwable $e) {
+                // Terminate safely if challenge retry violates SSRF boundaries
             }
         }
     }
@@ -343,7 +386,7 @@ if ($category === 'rest_api') {
         'ok' => ($httpCode >= 200 && $httpCode < 400),
         'status' => $httpCode,
         'latency_ms' => $latencyMs,
-        'final_url' => $targetUrl,
+        'final_url' => $finalUrl,
         'data' => json_decode($responseBody ?: '', true) ?? $responseBody
     ]);
 } else {

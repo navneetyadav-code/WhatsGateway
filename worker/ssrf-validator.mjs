@@ -77,13 +77,14 @@ export async function assertSafeWebhookUrl(targetUrl, { allowHttp = false, allow
     throw new Error('Target URL is invalid.');
   }
 
-  const host = parsed.hostname.toLowerCase();
+  const rawHost = parsed.hostname.toLowerCase();
+  const host = rawHost.replace(/^\[|\]$/g, '');
   if (parsed.protocol !== 'https:' && (!allowHttp || parsed.protocol !== 'http:')) {
     throw new Error('Target URL must use HTTPS.');
   }
 
   if (!allowLoopback) {
-    if (!host || ['localhost', '127.0.0.1', '::1'].includes(host) || host.endsWith('.local')) {
+    if (!host || ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(host) || host.endsWith('.local') || host.endsWith('.localhost') || host.endsWith('.internal')) {
       throw new Error('Target URL cannot point to localhost or private hosts.');
     }
 

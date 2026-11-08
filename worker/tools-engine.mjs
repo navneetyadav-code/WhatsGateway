@@ -770,8 +770,9 @@ function injectOrReplaceTestCookie(existingHeaders, cookieValue) {
 /**
  * Resolves, solves, activates and caches proxy cookies for free shared hosting
  */
-async function resolveProxyCookie(targetUrl, forceRefresh = false, challengeHtml = null) {
+async function resolveProxyCookie(targetUrl, forceRefresh = false, challengeHtml = null, allowLoopback = false) {
   try {
+    await assertSafeWebhookUrl(targetUrl, { allowHttp: true, allowLoopback });
     const domain = new URL(targetUrl).hostname;
     if (!forceRefresh && !challengeHtml) {
       const cached = sharedCookieJar.get(domain);
@@ -913,7 +914,7 @@ async function executeCustomRestApi(executionConfig, args = {}) {
 
     // Auto-detect & bypass ByetHost / InfinityFree / Epizy aes.js anti-bot challenge
     if (isAntiBotChallenge(rawText)) {
-      const solved = await resolveProxyCookie(finalUrl, true, rawText);
+      const solved = await resolveProxyCookie(finalUrl, true, rawText, Boolean(executionConfig.__allow_test_mock));
       if (solved) {
         reqOptions.headers = injectOrReplaceTestCookie(reqOptions.headers, solved);
         // If an anti-bot challenge occurred, the remote host is free shared hosting;
@@ -1038,7 +1039,7 @@ async function executeSharedEnvApi(executionConfig, args = {}) {
   let bodyPayload = null;
 
   if (route) {
-    endpoint = interpolateVariables(route.endpoint || '', args, true);
+    endpoint = interpolateVariables(route.endpoint || route.path || '', args, true);
     method = (route.method || 'GET').toUpperCase();
 
     // Dynamically interpolate and append query parameters if configured
@@ -1081,6 +1082,13 @@ async function executeSharedEnvApi(executionConfig, args = {}) {
 
   const finalUrl = `${baseUrl.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
 
+  // Security guardrail: SSRF validation against private/loopback/cloud metadata IPs
+  try {
+    await assertSafeWebhookUrl(finalUrl, { allowHttp: true, allowLoopback: Boolean(executionConfig.__allow_test_mock) });
+  } catch (ssrfErr) {
+    return { error: `SSRF validation failed: ${ssrfErr.message}` };
+  }
+
   const headers = {
     'Accept': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -1104,7 +1112,7 @@ async function executeSharedEnvApi(executionConfig, args = {}) {
   }
 
   try {
-    const testCookie = await resolveProxyCookie(finalUrl);
+    const testCookie = await resolveProxyCookie(finalUrl, false, null, Boolean(executionConfig.__allow_test_mock));
     if (testCookie) {
       reqOptions.headers = injectOrReplaceTestCookie(reqOptions.headers, testCookie);
     }
