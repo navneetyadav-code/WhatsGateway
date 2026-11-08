@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS `whatsapp_sessions` (
   `qr_updated_at` timestamp NULL DEFAULT NULL,
   `connected_at` timestamp NULL DEFAULT NULL,
   `disconnected_at` timestamp NULL DEFAULT NULL,
+  `locked_by` varchar(80) DEFAULT NULL,
+  `lease_expires_at` datetime DEFAULT NULL,
   `last_error` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),

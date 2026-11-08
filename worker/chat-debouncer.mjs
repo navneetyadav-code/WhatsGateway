@@ -117,7 +117,7 @@ export class MessageDebouncer {
     const primary = items[items.length - 1];
 
     try {
-      entry.onFlush({
+      return entry.onFlush({
         consolidatedText,
         itemCount: items.length,
         items,
@@ -125,6 +125,28 @@ export class MessageDebouncer {
       });
     } catch (err) {
       console.error(`[MessageDebouncer] Error in onFlush for ${key}:`, err);
+    }
+  }
+
+  /**
+  * DIST-04: Flush and process all pending buffers immediately.
+   * @returns {Promise<void>}
+   */
+  async flushAll() {
+    const keys = Array.from(this.buffers.keys());
+    const promises = [];
+    for (const key of keys) {
+      try {
+        const res = this.flush(key);
+        if (res && typeof res.then === 'function') {
+          promises.push(res);
+        }
+      } catch (err) {
+        console.error(`[MessageDebouncer] Error in flushAll for ${key}:`, err);
+      }
+    }
+    if (promises.length > 0) {
+      await Promise.allSettled(promises);
     }
   }
 

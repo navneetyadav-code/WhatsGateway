@@ -782,6 +782,94 @@ function destroySocket(session) {
     } catch (_) {}
     session.sock = null;
   }
+  if (session.leaseHeartbeat) {
+    clearInterval(session.leaseHeartbeat);
+    session.leaseHeartbeat = null;
+  }
+  if (session.userId) {
+    releaseSessionLease(session.userId, WORKER_ID).catch(() => {});
+  }
+}
+
+/**
+ * DIST-01: Await socket connection readiness with a bounded timeout
+ * Prevents premature failure and 45-second queue punting when auto-waking sessions.
+ */
+async function waitForSessionConnection(session, timeoutMs = 6000) {
+  if (session.state === 'connected' && session.sock) {
+    return true;
+  }
+  if (session.state !== 'connecting') {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const intervalMs = 150;
+    let elapsed = 0;
+
+    const timer = setInterval(() => {
+      elapsed += intervalMs;
+      if (session.state === 'connected' && session.sock) {
+        finish(true);
+      } else if (session.state !== 'connecting' || elapsed >= timeoutMs) {
+        finish(session.state === 'connected');
+      }
+    }, intervalMs);
+
+    function finish(result) {
+      if (!settled) {
+        settled = true;
+        clearInterval(timer);
+        resolve(result);
+      }
+    }
+  });
+}
+
+/**
+ * DIST-02: Acquire or renew atomic session lease in MySQL.
+ * Prevents multiple worker instances from running concurrent Baileys sockets for the same user.
+ */
+async function acquireSessionLease(userId, workerId, leaseSeconds = 30) {
+  try {
+    const [result] = await db.execute(
+      `UPDATE whatsapp_sessions
+       SET locked_by = ?,
+           lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND)
+       WHERE user_id = ?
+         AND (locked_by IS NULL OR locked_by = ? OR lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+      [workerId, leaseSeconds, userId, workerId]
+    );
+    if (result.affectedRows > 0) {
+      return true;
+    }
+    const [rows] = await db.execute(
+      `SELECT locked_by, lease_expires_at FROM whatsapp_sessions WHERE user_id = ? LIMIT 1`,
+      [userId]
+    );
+    if (rows && rows[0] && rows[0].locked_by && rows[0].locked_by !== workerId) {
+      logger.warn({ userId, heldBy: rows[0].locked_by, expiresAt: rows[0].lease_expires_at }, 'Another worker holds active session lease');
+      return false;
+    }
+    return false;
+  } catch (err) {
+    logger.warn({ err: err.message, userId }, 'Error checking session lease, allowing local session startup');
+    return true;
+  }
+}
+
+async function releaseSessionLease(userId, workerId) {
+  try {
+    await db.execute(
+      `UPDATE whatsapp_sessions
+       SET locked_by = NULL, lease_expires_at = NULL
+       WHERE user_id = ? AND locked_by = ?`,
+      [userId, workerId]
+    );
+  } catch (err) {
+    logger.warn({ err: err.message, userId }, 'Failed to release session lease');
+  }
 }
 
 async function startSession(userId, force = false, waitForReady = true) {
@@ -815,6 +903,15 @@ async function startSession(userId, force = false, waitForReady = true) {
 
   destroySocket(session);
   session.starting = null;
+
+  // DIST-02: Multi-worker collision guard
+  const hasLease = await acquireSessionLease(userId, WORKER_ID, 30);
+  if (!hasLease) {
+    logger.warn({ userId, workerId: WORKER_ID }, 'Skipping session startup: active lease held by another worker replica');
+    session.state = 'disconnected';
+    session.error = 'Session is active on another worker instance.';
+    return session;
+  }
 
   session.state = 'connecting';
   session.sleeping = false;
@@ -916,6 +1013,16 @@ async function startSession(userId, force = false, waitForReady = true) {
         if (connection === 'open') {
           session.starting = null;
           session.state = 'connected';
+          // DIST-02: Maintain lease heartbeat every 10s while connected
+          if (session.leaseHeartbeat) clearInterval(session.leaseHeartbeat);
+          session.leaseHeartbeat = setInterval(() => {
+            if (session.state === 'connected' && session.sock) {
+              acquireSessionLease(userId, WORKER_ID, 30).catch(() => {});
+            } else {
+              clearInterval(session.leaseHeartbeat);
+              session.leaseHeartbeat = null;
+            }
+          }, 10000);
           session.sleeping = false;
           session.qr = null;
           session.hasQr = false;
@@ -2348,6 +2455,11 @@ async function sendQueuedMessage(message) {
 
   const session = await startSession(String(message.user_id));
 
+  // DIST-01: If session is connecting, await socket open event up to 6 seconds before punting
+  if (session.state === 'connecting') {
+    await waitForSessionConnection(session, 6000);
+  }
+
   // If session is not connected, do NOT burn delivery retries or fail permanently!
   // Keep the message safely queued so that when the device is detected / connected, it will be dispatched immediately.
   if (session.state !== 'connected' || !session.sock) {
@@ -2679,31 +2791,44 @@ async function deliverWebhookJob(job) {
   }
 }
 
-let webhookQueueBusy = false;
+// DIST-03: Concurrent Webhook Queue Dispatcher
+// Eliminates platform-wide Head-of-Line (HoL) blocking using a bounded concurrency pool
+const MAX_CONCURRENT_WEBHOOKS = 10;
+let activeWebhookWorkers = 0;
+let lastWebhookCleanupAt = 0;
+
 async function processWebhookQueueOnce() {
-  if (webhookQueueBusy) return;
-  webhookQueueBusy = true;
+  if (activeWebhookWorkers >= MAX_CONCURRENT_WEBHOOKS) {
+    return;
+  }
+
+  const availableSlots = Math.max(1, Math.min(10, MAX_CONCURRENT_WEBHOOKS - activeWebhookWorkers));
 
   try {
-    await db.execute(
-      `UPDATE webhook_queue
-       SET status = 'dead_letter', locked_at = NULL, locked_by = NULL,
-           last_error = COALESCE(last_error, 'Webhook worker lease expired after final attempt.')
-       WHERE status = 'processing'
-         AND (locked_at IS NULL OR locked_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE))
-         AND attempts >= max_attempts`
-    );
+    const now = Date.now();
+    // Run dead letter / expired lease recovery at most once every 30 seconds
+    if (now - lastWebhookCleanupAt > 30000) {
+      lastWebhookCleanupAt = now;
+      await db.execute(
+        `UPDATE webhook_queue
+         SET status = 'dead_letter', locked_at = NULL, locked_by = NULL,
+             last_error = COALESCE(last_error, 'Webhook worker lease expired after final attempt.')
+         WHERE status = 'processing'
+           AND (locked_at IS NULL OR locked_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE))
+           AND attempts >= max_attempts`
+      );
 
-    await db.execute(
-      `UPDATE webhook_queue
-       SET status = 'queued', locked_at = NULL, locked_by = NULL,
-           last_error = COALESCE(last_error, 'Webhook worker lease expired; returned to retry queue.')
-       WHERE status = 'processing'
-         AND (locked_at IS NULL OR locked_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE))
-         AND attempts < max_attempts`
-    );
+      await db.execute(
+        `UPDATE webhook_queue
+         SET status = 'queued', locked_at = NULL, locked_by = NULL,
+             last_error = COALESCE(last_error, 'Webhook worker lease expired; returned to retry queue.')
+         WHERE status = 'processing'
+           AND (locked_at IS NULL OR locked_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE))
+           AND attempts < max_attempts`
+      );
+    }
 
-    let job = null;
+    let jobs = [];
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
@@ -2711,17 +2836,20 @@ async function processWebhookQueueOnce() {
         `SELECT * FROM webhook_queue
          WHERE status = 'queued' AND available_at <= NOW()
          ORDER BY id ASC
-         LIMIT 1
-         FOR UPDATE SKIP LOCKED`
+         LIMIT ?
+         FOR UPDATE SKIP LOCKED`,
+        [availableSlots]
       );
 
       if (rows && rows.length > 0) {
-        job = rows[0];
+        jobs = rows;
+        const jobIds = jobs.map(j => j.id);
+        const placeholders = jobIds.map(() => '?').join(',');
         await conn.execute(
           `UPDATE webhook_queue
            SET status = 'processing', locked_at = NOW(), locked_by = ?
-           WHERE id = ?`,
-          [WORKER_ID, job.id]
+           WHERE id IN (${placeholders})`,
+          [WORKER_ID, ...jobIds]
         );
       }
       await conn.commit();
@@ -2732,16 +2860,26 @@ async function processWebhookQueueOnce() {
       conn.release();
     }
 
-    if (!job) {
+    if (!jobs || jobs.length === 0) {
       return;
     }
 
-    await deliverWebhookJob(job);
-    setImmediate(processWebhookQueueOnce);
+    // Dispatch claimed jobs concurrently up to MAX_CONCURRENT_WEBHOOKS
+    for (const job of jobs) {
+      activeWebhookWorkers++;
+      (async () => {
+        try {
+          await deliverWebhookJob(job);
+        } catch (jobErr) {
+          logger.error({ err: jobErr.message, jobId: job.id }, 'Error delivering webhook job');
+        } finally {
+          activeWebhookWorkers--;
+          setImmediate(processWebhookQueueOnce);
+        }
+      })();
+    }
   } catch (err) {
     logger.error({ err: err.message }, 'Webhook queue processor error');
-  } finally {
-    webhookQueueBusy = false;
   }
 }
 
@@ -3289,6 +3427,17 @@ async function startWorker() {
     setInterval(processWebhookQueueOnce, QUEUE_POLL_MS);
   });
   attachClientErrorDiagnostics(server, logger);
+
+  // DIST-04: Graceful shutdown hook - flush all active in-flight debouncer messages before exit
+  const handleGracefulShutdown = async (signal) => {
+    logger.info({ signal }, 'Received termination signal, flushing in-flight debouncer buffers...');
+    try {
+      await globalDebouncer.flushAll();
+    } catch (e) {}
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
 }
 
 startWorker().catch(async (error) => {
