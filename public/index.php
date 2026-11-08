@@ -58,8 +58,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET'
     redirect_to($cleanTarget);
 }
 
-$publicPages = ['login', 'register', 'docs', 'forgot-password', 'google-auth', 'google-contacts', 'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'tos', 'home', 'api', 'send', 'messages', 'api-contacts', 'contacts-api', 'api-contacts-batch', 'contacts-batch', 'api-contacts-delete', 'contacts-delete'];
-$dashboardPages = ['dashboard', 'live-chat', 'message', 'device', 'api-keys', 'queue', 'contacts', 'feedback', 'webhooks', 'campaigns', 'audit', 'chatbot', 'ai-agent', 'knowledge', 'tools', 'app-store', 'presets', 'escalations', 'rules', 'keyword-rules', 'security', 'ai-credentials', 'ai-keys', 'memory', 'training'];
+$publicPages = ['login', 'register', 'docs', 'forgot-password', 'google-auth', 'google-contacts', 'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'tos', 'home', 'api', 'send', 'messages', 'api-contacts', 'contacts-api', 'api-contacts-batch', 'contacts-batch', 'api-contacts-delete', 'contacts-delete', 'api-groups', 'groups-api'];
+$dashboardPages = ['dashboard', 'live-chat', 'message', 'groups', 'device', 'api-keys', 'queue', 'contacts', 'feedback', 'webhooks', 'campaigns', 'audit', 'chatbot', 'ai-agent', 'knowledge', 'tools', 'app-store', 'presets', 'escalations', 'rules', 'keyword-rules', 'security', 'ai-credentials', 'ai-keys', 'memory', 'training'];
 
 if ($page === 'logout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
@@ -211,6 +211,11 @@ if ($page === 'message-send' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $formattedMsg = apply_contact_template($message, $contact);
             $enqueueForRecipient($contact['phone'], $formattedMsg);
+        } elseif ($type === 'group') {
+            $groupId = trim((string) ($_POST['group_id'] ?? ''));
+            if (!$groupId) throw new Exception('Group selection or Group JID required');
+            $groupId = normalize_phone($groupId);
+            $enqueueForRecipient($groupId, $message);
         } elseif ($type === 'campaign') {
             $campaignId = (int) ($_POST['campaign_id'] ?? 0);
             $contacts = campaign_contacts((int) $user['id'], $campaignId);
@@ -1453,6 +1458,11 @@ if ($page === 'api-contacts' || $page === 'contacts-api') {
 
 if ($page === 'api-contacts-batch' || $page === 'contacts-batch') {
     require __DIR__ . '/api/contacts-batch.php';
+    exit;
+}
+
+if ($page === 'api-groups' || $page === 'groups-api') {
+    require __DIR__ . '/api/groups.php';
     exit;
 }
 

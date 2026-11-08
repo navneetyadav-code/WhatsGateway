@@ -58,6 +58,7 @@ $sections = [
     'dashboard' => ['data' => 'overview.data.php',  'view' => 'overview.php'],
     'live-chat' => ['data' => 'live-chat.data.php', 'view' => 'live-chat.php'],
     'message'   => ['data' => 'message.data.php',   'view' => 'message.php'],
+    'groups'    => ['data' => 'groups.data.php',    'view' => 'groups.php'],
     'device'    => ['data' => 'device.data.php',    'view' => 'device.php'],
     'queue'     => ['data' => 'queue.data.php',     'view' => 'queue.php'],
     'api-keys'  => ['data' => 'api-keys.data.php',  'view' => 'api-keys.php'],

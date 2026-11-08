@@ -3173,6 +3173,154 @@ app.get('/health', async (req, res) => {
   });
 });
 
+app.get('/sessions/:userId/groups', async (req, res) => {
+  const userId = req.params.userId;
+  const session = getSession(userId);
+
+  if (session.sleeping) {
+    try {
+      session.sleeping = false;
+      session.wasSleeping = true;
+      session.lastActivityAt = Date.now();
+      await updateSessionRecord(userId, session);
+      await startSession(userId, false, false);
+    } catch (_) {}
+  }
+
+  if (session.state !== 'connected' || !session.sock) {
+    try {
+      const [cached] = await db.execute(
+        'SELECT group_jid AS id, subject, participants_count, is_admin, announce, description AS `desc`, created_time, last_synced_at FROM whatsapp_groups WHERE user_id = ? ORDER BY subject ASC',
+        [userId]
+      );
+      return res.json({
+        ok: true,
+        count: cached.length,
+        groups: cached.map(r => ({
+          id: r.id,
+          subject: r.subject || 'Unnamed Group',
+          participants_count: Number(r.participants_count) || 0,
+          is_admin: Boolean(r.is_admin),
+          announce: Boolean(r.announce),
+          desc: r.desc || '',
+          created_time: r.created_time,
+          last_synced_at: r.last_synced_at
+        })),
+        cached: true,
+        session_state: session.state,
+        notice: session.state !== 'connected' ? 'Device is not connected. Showing cached groups from last sync.' : null
+      });
+    } catch (dbErr) {
+      return res.status(409).json({
+        ok: false,
+        error: 'WhatsApp device is not connected and no cached groups were found.',
+        groups: []
+      });
+    }
+  }
+
+  try {
+    let rawGroups = {};
+    if (typeof session.sock.groupFetchAllParticipating === 'function') {
+      rawGroups = await session.sock.groupFetchAllParticipating();
+    }
+
+    const myJid = session.sock.user?.id || '';
+    const cleanMe = myJid ? myJid.split('@')[0].split(':')[0] : '';
+
+    const groups = Object.values(rawGroups || {}).map((g) => {
+      const participants = Array.isArray(g.participants) ? g.participants : [];
+      const isAdmin = participants.some((p) => {
+        const pJid = p.id || p.jid || '';
+        const cleanP = pJid.split('@')[0].split(':')[0];
+        return cleanMe && cleanP === cleanMe && (p.admin === 'admin' || p.admin === 'superadmin');
+      });
+
+      return {
+        id: g.id,
+        subject: g.subject || 'Unnamed Group',
+        owner: g.owner || g.subjectOwner || null,
+        creation: g.creation ? new Date(g.creation * 1000).toISOString() : null,
+        participants_count: participants.length || g.size || 0,
+        desc: g.desc ? String(g.desc) : '',
+        restrict: Boolean(g.restrict),
+        announce: Boolean(g.announce),
+        is_admin: isAdmin
+      };
+    });
+
+    groups.sort((a, b) => (a.subject || '').localeCompare(b.subject || ''));
+
+    (async () => {
+      try {
+        for (const g of groups) {
+          await db.execute(
+            `INSERT INTO whatsapp_groups (user_id, group_jid, subject, participants_count, is_admin, announce, description, created_time, last_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE
+               subject = VALUES(subject),
+               participants_count = VALUES(participants_count),
+               is_admin = VALUES(is_admin),
+               announce = VALUES(announce),
+               description = VALUES(description),
+               last_synced_at = NOW()`,
+            [
+              userId,
+              g.id,
+              g.subject,
+              g.participants_count,
+              g.is_admin ? 1 : 0,
+              g.announce ? 1 : 0,
+              g.desc || null,
+              g.creation ? new Date(g.creation) : null
+            ]
+          );
+        }
+      } catch (cacheErr) {
+        logger.warn({ cacheErr: cacheErr.message }, 'Failed to persist groups cache');
+      }
+    })();
+
+    res.json({
+      ok: true,
+      count: groups.length,
+      groups,
+      cached: false
+    });
+  } catch (error) {
+    logger.error({ err: error.message }, 'Failed to fetch participating groups from Baileys');
+
+    try {
+      const [cached] = await db.execute(
+        'SELECT group_jid AS id, subject, participants_count, is_admin, announce, description AS `desc`, created_time, last_synced_at FROM whatsapp_groups WHERE user_id = ? ORDER BY subject ASC',
+        [userId]
+      );
+      return res.json({
+        ok: true,
+        count: cached.length,
+        groups: cached.map(r => ({
+          id: r.id,
+          subject: r.subject || 'Unnamed Group',
+          participants_count: Number(r.participants_count) || 0,
+          is_admin: Boolean(r.is_admin),
+          announce: Boolean(r.announce),
+          desc: r.desc || '',
+          created_time: r.created_time,
+          last_synced_at: r.last_synced_at
+        })),
+        cached: true,
+        notice: 'Live sync failed; showing cached groups from last sync.'
+      });
+    } catch (_) {}
+
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to fetch WhatsApp groups: ' + error.message,
+      groups: []
+    });
+  }
+});
+
 app.get('/sessions/:userId/status', (req, res) => {
   res.json({ ok: true, session: publicSession(getSession(req.params.userId)) });
 });

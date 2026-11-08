@@ -8,6 +8,7 @@ $pageLabels = [
     'contacts'    => 'Contacts',
     'feedback'    => 'Customer Feedback',
     'message'     => 'New Message',
+    'groups'      => 'WhatsApp Groups',
     'chatbot'     => 'AI Agent Studio',
     'ai-agent'    => 'AI Agent Studio',
     'knowledge'   => 'Company Knowledge Base (RAG)',

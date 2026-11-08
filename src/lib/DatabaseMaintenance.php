@@ -27,6 +27,7 @@ final class DatabaseMaintenance
         'chatbot_rules'         => 'User automated chatbot response rules',
         'webhooks'              => 'User webhook dispatch URLs and secret configurations',
         'whatsapp_sessions'     => 'WhatsApp Baileys device pairing credentials and sessions',
+        'whatsapp_groups'       => 'WhatsApp groups directory and metadata',
         'schema_migrations'     => 'System schema version tracking',
     ];
 
