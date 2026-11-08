@@ -348,6 +348,115 @@ SQL;
     }
 
     /**
+     * DB-06: Rolling automated retention cleanup.
+     * Safely purges ephemeral logs, delivery receipts, expired reset tokens,
+     * and processed/cancelled queue records older than the retention window (default 30 days),
+     * strictly preserving all user accounts, credentials, configurations, active queues, and chats.
+     *
+     * @param int $retentionDays Number of days of history to retain (default 30)
+     * @param bool $dryRun When true, calculates purgeable counts without deleting
+     * @return array Summary of purged records per table
+     */
+    public static function purgeExpiredRecords(int $retentionDays = 30, bool $dryRun = false): array
+    {
+        $pdo = Database::pdo();
+        $startTime = microtime(true);
+        $retentionDays = max(1, $retentionDays);
+        $results = [];
+        $totalPurged = 0;
+
+        // Table-specific retention policies
+        $policies = [
+            'api_request_logs' => [
+                'description' => 'Historical API request audit telemetry',
+                'query'       => 'DELETE FROM api_request_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'count_query' => 'SELECT COUNT(*) FROM api_request_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'days'        => $retentionDays,
+            ],
+            'webhook_deliveries' => [
+                'description' => 'Historical webhook delivery records',
+                'query'       => 'DELETE FROM webhook_deliveries WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'count_query' => 'SELECT COUNT(*) FROM webhook_deliveries WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'days'        => $retentionDays,
+            ],
+            'login_attempts' => [
+                'description' => 'Expired authentication attempt logs',
+                'query'       => 'DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'count_query' => 'SELECT COUNT(*) FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+                'days'        => min(7, $retentionDays),
+            ],
+            'password_resets' => [
+                'description' => 'Expired password reset OTP tokens',
+                'query'       => 'DELETE FROM password_resets WHERE expires_at < NOW()',
+                'count_query' => 'SELECT COUNT(*) FROM password_resets WHERE expires_at < NOW()',
+                'days'        => null,
+            ],
+            'message_queue' => [
+                'description' => 'Terminal processed/failed/cancelled outbound queue messages',
+                'query'       => "DELETE FROM message_queue WHERE status IN ('sent', 'delivered', 'read', 'failed', 'cancelled') AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+                'count_query' => "SELECT COUNT(*) FROM message_queue WHERE status IN ('sent', 'delivered', 'read', 'failed', 'cancelled') AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+                'days'        => $retentionDays,
+            ],
+            'webhook_queue' => [
+                'description' => 'Terminal delivered or dead-letter webhook queue items',
+                'query'       => "DELETE FROM webhook_queue WHERE status IN ('delivered', 'dead_letter') AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+                'count_query' => "SELECT COUNT(*) FROM webhook_queue WHERE status IN ('delivered', 'dead_letter') AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+                'days'        => $retentionDays,
+            ],
+            'media_assets' => [
+                'description' => 'Expired unreferenced uploaded media records',
+                'query'       => 'DELETE FROM media_assets WHERE reference_count <= 0 AND expires_at IS NOT NULL AND expires_at < NOW()',
+                'count_query' => 'SELECT COUNT(*) FROM media_assets WHERE reference_count <= 0 AND expires_at IS NOT NULL AND expires_at < NOW()',
+                'days'        => null,
+            ],
+        ];
+
+        foreach ($policies as $table => $cfg) {
+            try {
+                $countStmt = $pdo->prepare($cfg['count_query']);
+                if ($cfg['days'] !== null) {
+                    $countStmt->execute([$cfg['days']]);
+                } else {
+                    $countStmt->execute();
+                }
+                $count = (int) $countStmt->fetchColumn();
+
+                if (!$dryRun && $count > 0) {
+                    $delStmt = $pdo->prepare($cfg['query']);
+                    if ($cfg['days'] !== null) {
+                        $delStmt->execute([$cfg['days']]);
+                    } else {
+                        $delStmt->execute();
+                    }
+                }
+
+                $totalPurged += $count;
+                $results[$table] = [
+                    'description' => $cfg['description'],
+                    'purged'      => $count,
+                    'status'      => $dryRun ? 'WOULD_PURGE' : 'PURGED',
+                ];
+            } catch (\Throwable $e) {
+                $results[$table] = [
+                    'description' => $cfg['description'],
+                    'purged'      => 0,
+                    'error'       => $e->getMessage(),
+                    'status'      => 'SKIPPED',
+                ];
+            }
+        }
+
+        return [
+            'ok'             => true,
+            'dry_run'        => $dryRun,
+            'retention_days' => $retentionDays,
+            'total_purged'   => $totalPurged,
+            'tables'         => $results,
+            'duration_ms'    => round((microtime(true) - $startTime) * 1000, 2),
+        ];
+    }
+
+    /**
      * Human-readable byte formatting.
      */
     public static function formatBytes(int $bytes): string

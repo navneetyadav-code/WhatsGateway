@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS `webhook_deliveries` (
 CREATE TABLE IF NOT EXISTS `message_queue` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `user_id` bigint(20) unsigned NOT NULL,
+  `campaign_id` bigint(20) unsigned DEFAULT NULL,
   `api_key_id` bigint(20) unsigned DEFAULT NULL,
   `recipient` varchar(80) NOT NULL,
   `normalized_recipient` varchar(80) DEFAULT NULL,
@@ -219,6 +220,9 @@ CREATE TABLE IF NOT EXISTS `message_queue` (
   KEY `idx_message_queue_user_created` (`user_id`,`created_at`),
   KEY `idx_message_queue_api_key_created` (`api_key_id`,`created_at`),
   KEY `idx_message_queue_provider_msg` (`provider_message_id`),
+  KEY `idx_message_queue_campaign` (`campaign_id`,`status`),
+  KEY `idx_message_queue_user_campaign` (`user_id`,`campaign_id`),
+  KEY `idx_queue_priority_tenant` (`status`,`user_id`,`priority`,`available_at`,`id`),
   CONSTRAINT `fk_message_queue_api_key` FOREIGN KEY (`api_key_id`) REFERENCES `api_keys` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_message_queue_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

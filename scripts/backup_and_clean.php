@@ -21,7 +21,7 @@ if (PHP_SAPI !== 'cli') {
 require_once dirname(__DIR__) . '/src/bootstrap.php';
 
 // Parse CLI options
-$options = getopt('', ['dry-run', 'backup-only', 'clean-only', 'clean-uploads', 'out-dir:', 'help']);
+$options = getopt('', ['dry-run', 'backup-only', 'clean-only', 'purge-expired', 'retention-days:', 'clean-uploads', 'out-dir:', 'help']);
 if (isset($options['help'])) {
     echo <<<HELP
 WhatsGateway Maintenance Utility: Database SQL Backup & Clean
@@ -30,12 +30,14 @@ Usage:
   php scripts/backup_and_clean.php [options]
 
 Options:
-  --dry-run        Simulate cleanup without deleting data
-  --backup-only    Generate SQL dump only, skip purging tables
-  --clean-only     Purge messages and queues without creating backup (caution!)
-  --clean-uploads  Also delete orphaned media files in public/uploads/
-  --out-dir=<path> Specify directory for SQL dump file (default: storage/backups)
-  --help           Show this help message
+  --dry-run               Simulate cleanup without deleting data
+  --backup-only           Generate SQL dump only, skip purging tables
+  --purge-expired         Purge records older than retention period (DB-06)
+  --retention-days=<days> Number of days of history to retain (default: 30)
+  --clean-only            Purge all messages and queues without creating backup (caution!)
+  --clean-uploads         Also delete orphaned media files in public/uploads/
+  --out-dir=<path>        Specify directory for SQL dump file (default: storage/backups)
+  --help                  Show this help message
 
 HELP;
     exit(0);
@@ -44,6 +46,8 @@ HELP;
 $dryRun = isset($options['dry-run']);
 $backupOnly = isset($options['backup-only']);
 $cleanOnly = isset($options['clean-only']);
+$purgeExpired = isset($options['purge-expired']) || isset($options['retention-days']);
+$retentionDays = isset($options['retention-days']) ? max(1, (int) $options['retention-days']) : 30;
 $cleanUploads = isset($options['clean-uploads']);
 $outDir = isset($options['out-dir']) ? (string) $options['out-dir'] : null;
 
@@ -79,10 +83,26 @@ if (!$cleanOnly) {
 // STEP 2: CLEAN MESSAGES, LOGS, QUEUES & HISTORY (unless --backup-only)
 // -----------------------------------------------------------------------------
 if (!$backupOnly) {
-    echo ">>> [2/2] Cleaning message tables and transient history...\n";
-    echo "    (Preserving user accounts, credentials, AI configurations, and migrations)\n\n";
-    try {
-        $cleanResult = DatabaseMaintenance::cleanDatabase($dryRun);
+    if ($purgeExpired) {
+        echo ">>> [2/2] Running automated rolling retention cleanup (DB-06)...\n";
+        echo "    (Retaining last {$retentionDays} days; preserving accounts, configurations, and active queues)\n\n";
+        try {
+            $purgeResult = DatabaseMaintenance::purgeExpiredRecords($retentionDays, $dryRun);
+            echo "    --- Rolling Purge Breakdown ---\n";
+            foreach ($purgeResult['tables'] as $table => $info) {
+                printf("    • %-25s : %-12s (%d records)\n", $table, $info['status'], $info['purged']);
+            }
+            echo "\n    [✔] Total expired records purged: {$purgeResult['total_purged']}\n";
+            echo "    [✔] Execution time:               {$purgeResult['duration_ms']}ms\n\n";
+        } catch (Throwable $e) {
+            fwrite(STDERR, "    [✖] ROLLING PURGE ERROR: " . $e->getMessage() . "\n");
+            exit(1);
+        }
+    } else {
+        echo ">>> [2/2] Cleaning message tables and transient history...\n";
+        echo "    (Preserving user accounts, credentials, AI configurations, and migrations)\n\n";
+        try {
+            $cleanResult = DatabaseMaintenance::cleanDatabase($dryRun);
 
         echo "    --- Cleaned Tables Breakdown ---\n";
         foreach ($cleanResult['cleaned_tables'] as $table => $info) {
@@ -101,6 +121,7 @@ if (!$backupOnly) {
     } catch (Throwable $e) {
         fwrite(STDERR, "    [✖] CLEANUP ENCOUNTERED ERROR: " . $e->getMessage() . "\n");
         exit(1);
+    }
     }
 
     if ($cleanUploads) {

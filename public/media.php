@@ -51,25 +51,26 @@ if (!$isAuthorized) {
     $sessionUser = current_user();
     if ($sessionUser) {
         $authorizedUserId = (int) $sessionUser['id'];
-        // Verify user ownership or admin privilege
+        // DB-03: Query indexed media_assets first (indexed by user_id, storage_key, and file_path)
+        // to prevent full-table JSON scans on message_queue for every media view.
         $pdo = Database::pdo();
-        $ownerCheck = $pdo->prepare(
-            "SELECT 1 FROM message_queue 
-             WHERE user_id = ? 
-               AND (
-                 JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.path')) LIKE ?
-                 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.name')) = ?
-               )
-             LIMIT 1"
-        );
-        $ownerCheck->execute([$authorizedUserId, '%' . $filename, $filename]);
-        if ($ownerCheck->fetchColumn()) {
+        $assetCheck = $pdo->prepare("SELECT 1 FROM media_assets WHERE user_id = ? AND (storage_key = ? OR file_path LIKE ?) LIMIT 1");
+        $assetCheck->execute([$authorizedUserId, $filename, '%' . $filename]);
+        if ($assetCheck->fetchColumn()) {
             $isAuthorized = true;
         } else {
-            // Check media_assets
-            $assetCheck = $pdo->prepare("SELECT 1 FROM media_assets WHERE user_id = ? AND file_path LIKE ? LIMIT 1");
-            $assetCheck->execute([$authorizedUserId, '%' . $filename]);
-            if ($assetCheck->fetchColumn()) {
+            // Fallback for legacy messages sent before media_assets tracking existed
+            $ownerCheck = $pdo->prepare(
+                "SELECT 1 FROM message_queue 
+                 WHERE user_id = ? 
+                   AND (
+                     JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.path')) LIKE ?
+                     OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.name')) = ?
+                   )
+                 LIMIT 1"
+            );
+            $ownerCheck->execute([$authorizedUserId, '%' . $filename, $filename]);
+            if ($ownerCheck->fetchColumn()) {
                 $isAuthorized = true;
             }
         }
@@ -81,19 +82,26 @@ if (!$isAuthorized) {
     $apiUser = authenticate_api_request();
     if ($apiUser) {
         $authorizedUserId = (int) $apiUser['user_id'];
+        // DB-03: Query indexed media_assets first for API users
         $pdo = Database::pdo();
-        $ownerCheck = $pdo->prepare(
-            "SELECT 1 FROM message_queue 
-             WHERE user_id = ? 
-               AND (
-                 JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.path')) LIKE ?
-                 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.name')) = ?
-               )
-             LIMIT 1"
-        );
-        $ownerCheck->execute([$authorizedUserId, '%' . $filename, $filename]);
-        if ($ownerCheck->fetchColumn()) {
+        $assetCheck = $pdo->prepare("SELECT 1 FROM media_assets WHERE user_id = ? AND (storage_key = ? OR file_path LIKE ?) LIMIT 1");
+        $assetCheck->execute([$authorizedUserId, $filename, '%' . $filename]);
+        if ($assetCheck->fetchColumn()) {
             $isAuthorized = true;
+        } else {
+            $ownerCheck = $pdo->prepare(
+                "SELECT 1 FROM message_queue 
+                 WHERE user_id = ? 
+                   AND (
+                     JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.path')) LIKE ?
+                     OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.attachment.name')) = ?
+                   )
+                 LIMIT 1"
+            );
+            $ownerCheck->execute([$authorizedUserId, '%' . $filename, $filename]);
+            if ($ownerCheck->fetchColumn()) {
+                $isAuthorized = true;
+            }
         }
     }
 }

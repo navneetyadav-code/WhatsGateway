@@ -34,13 +34,17 @@ function enqueue_message(int $userId, ?int $apiKeyId, string $to, string $messag
 function api_key_rate_status(array $apiKey): array
 {
     $pdo = Database::pdo();
+    // DB-05: Bound rate-limiting aggregation to the last 24 hours in the WHERE clause
+    // to utilize idx_message_queue_api_key_created and prevent full historical table scans.
     $stmt = $pdo->prepare(
         "SELECT
-            SUM(created_at >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)) AS per_minute,
-            SUM(created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)) AS per_hour,
-            SUM(created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)) AS per_day
+            COALESCE(SUM(created_at >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)), 0) AS per_minute,
+            COALESCE(SUM(created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)), 0) AS per_hour,
+            COUNT(*) AS per_day
          FROM message_queue
-         WHERE api_key_id = ? AND status <> 'cancelled'"
+         WHERE api_key_id = ?
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+           AND status <> 'cancelled'"
     );
     $stmt->execute([(int) $apiKey['id']]);
     $row = $stmt->fetch() ?: [];
@@ -241,7 +245,10 @@ function create_campaign_for_contacts(
         $chunks = array_chunk($contacts, $batchSize);
         $messageType = !empty($attachment['type']) ? (string) $attachment['type'] : 'text';
 
+        // DB-04 & DB-02: Multi-row chunked batch inserts with physical campaign_id column.
+        // Reduces database network round-trips from N to ceil(N / 250).
         foreach ($chunks as $chunk) {
+            $rowsToInsert = [];
             foreach ($chunk as $contact) {
                 $recipientPhone = (string) ($contact['phone'] ?? '');
                 if ($recipientPhone === '') {
@@ -264,33 +271,41 @@ function create_campaign_for_contacts(
                     $payloadData['attachment'] = $attachment;
                 }
 
-                if ($availableAt) {
-                    $queue = $pdo->prepare(
-                        'INSERT INTO message_queue (user_id, api_key_id, recipient, message_type, body, payload, priority, available_at)
-                         VALUES (?, NULL, ?, ?, ?, ?, 1, ?)'
-                    );
-                    $queue->execute([
-                        $userId,
-                        $recipientPhone,
-                        $messageType,
-                        $body,
-                        json_encode($payloadData, JSON_UNESCAPED_SLASHES),
-                        $availableAt,
-                    ]);
-                } else {
-                    $queue = $pdo->prepare(
-                        'INSERT INTO message_queue (user_id, api_key_id, recipient, message_type, body, payload, priority)
-                         VALUES (?, NULL, ?, ?, ?, ?, 1)'
-                    );
-                    $queue->execute([
-                        $userId,
-                        $recipientPhone,
-                        $messageType,
-                        $body,
-                        json_encode($payloadData, JSON_UNESCAPED_SLASHES),
-                    ]);
+                $rowsToInsert[] = [
+                    'recipient' => $recipientPhone,
+                    'body' => $body,
+                    'payload' => json_encode($payloadData, JSON_UNESCAPED_SLASHES),
+                ];
+            }
+
+            if (!empty($rowsToInsert)) {
+                $params = [];
+                $valueClauses = [];
+                foreach ($rowsToInsert as $r) {
+                    if ($availableAt) {
+                        $valueClauses[] = '(?, ?, NULL, ?, ?, ?, ?, 1, ?)';
+                        $params[] = $userId;
+                        $params[] = $campaignId;
+                        $params[] = $r['recipient'];
+                        $params[] = $messageType;
+                        $params[] = $r['body'];
+                        $params[] = $r['payload'];
+                        $params[] = $availableAt;
+                    } else {
+                        $valueClauses[] = '(?, ?, NULL, ?, ?, ?, ?, 1, NOW())';
+                        $params[] = $userId;
+                        $params[] = $campaignId;
+                        $params[] = $r['recipient'];
+                        $params[] = $messageType;
+                        $params[] = $r['body'];
+                        $params[] = $r['payload'];
+                    }
                 }
-                $queued++;
+
+                $sql = 'INSERT INTO message_queue (user_id, campaign_id, api_key_id, recipient, message_type, body, payload, priority, available_at) VALUES '
+                     . implode(', ', $valueClauses);
+                $pdo->prepare($sql)->execute($params);
+                $queued += count($rowsToInsert);
             }
         }
 
@@ -418,6 +433,7 @@ function resume_campaign(int $userId, int $campaignId): void
 
 function campaign_contacts(int $userId, int $campaignId): array
 {
+    // DB-02: Indexed search using physical campaign_id column with JSON fallback for legacy rows
     $stmt = Database::pdo()->prepare(
         "SELECT DISTINCT contacts.*
          FROM message_queue
@@ -425,11 +441,10 @@ function campaign_contacts(int $userId, int $campaignId): array
              ON contacts.id = JSON_UNQUOTE(JSON_EXTRACT(message_queue.payload, '$.contact_id'))
             AND contacts.user_id = message_queue.user_id
          WHERE message_queue.user_id = ?
-           AND JSON_UNQUOTE(JSON_EXTRACT(message_queue.payload, '$.source')) = 'campaign'
-           AND JSON_EXTRACT(message_queue.payload, '$.campaign_id') = ?
+           AND (message_queue.campaign_id = ? OR (message_queue.campaign_id IS NULL AND JSON_EXTRACT(message_queue.payload, '$.campaign_id') = ?))
          ORDER BY contacts.name ASC, contacts.id ASC"
     );
-    $stmt->execute([$userId, $campaignId]);
+    $stmt->execute([$userId, $campaignId, $campaignId]);
     return $stmt->fetchAll();
 }
 
@@ -465,8 +480,7 @@ function sync_campaign_statuses(int $userId): void
          FROM campaigns
          LEFT JOIN message_queue
             ON message_queue.user_id = campaigns.user_id
-           AND JSON_UNQUOTE(JSON_EXTRACT(message_queue.payload, '$.source')) = 'campaign'
-           AND JSON_EXTRACT(message_queue.payload, '$.campaign_id') = campaigns.id
+           AND (message_queue.campaign_id = campaigns.id OR (message_queue.campaign_id IS NULL AND JSON_EXTRACT(message_queue.payload, '$.campaign_id') = campaigns.id))
          WHERE campaigns.user_id = ?
          GROUP BY campaigns.id, campaigns.status"
     );
