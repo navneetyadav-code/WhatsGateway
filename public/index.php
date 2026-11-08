@@ -19,7 +19,7 @@ declare(strict_types=1);
  *     contact-delete, campaign-create, chatbot-create, chatbot-status, chatbot-delete, webhook, logout
  */
 
-if (function_exists('opcache_reset')) { opcache_reset(); }
+// PERF-01: Persistent OPcache bytecode caching enabled (opcache_reset removed)
 
 require_once dirname(__DIR__) . '/src/bootstrap.php';
 

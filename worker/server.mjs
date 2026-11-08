@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import dns from 'dns/promises';
 import net from 'net';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs';
-import { rm } from 'fs/promises';
+import { rm, readFile, readdir } from 'fs/promises';
 import { dirname, join, resolve, basename } from 'path';
 import { fileURLToPath } from 'url';
 import makeWASocket, {
@@ -581,33 +581,31 @@ async function resolveJidToPhone(userId, jid, session = null) {
       }
     } catch (_) {}
 
-    // 3b. Read disk reverse mapping: lid-mapping-${lidUser}_reverse.json
+    // 3b. Read disk reverse mapping: lid-mapping-${lidUser}_reverse.json asynchronously (PERF-02)
     if (!resolvedPn) {
       try {
         const authDir = join(SESSION_DIR, `user_${userId}`);
         const reverseFile = join(authDir, `lid-mapping-${lidUser}_reverse.json`);
-        if (existsSync(reverseFile)) {
-          const raw = readFileSync(reverseFile, 'utf8').trim();
-          resolvedPn = JSON.parse(raw);
+        const raw = await readFile(reverseFile, 'utf8').catch(() => null);
+        if (raw) {
+          resolvedPn = JSON.parse(raw.trim());
         }
       } catch (_) {}
     }
 
-    // 3c. Scan forward mapping files in session directory
+    // 3c. Scan forward mapping files in session directory asynchronously (PERF-02)
     if (!resolvedPn) {
       try {
         const authDir = join(SESSION_DIR, `user_${userId}`);
-        if (existsSync(authDir)) {
-          const files = readdirSync(authDir);
-          for (const f of files) {
-            if (f.startsWith('lid-mapping-') && !f.endsWith('_reverse.json') && f.endsWith('.json')) {
-              const content = readFileSync(join(authDir, f), 'utf8');
-              if (content.includes(lidUser)) {
-                const m = f.match(/^lid-mapping-(\d+)\.json$/);
-                if (m && m[1]) {
-                  resolvedPn = m[1];
-                  break;
-                }
+        const files = await readdir(authDir).catch(() => []);
+        for (const f of files) {
+          if (f.startsWith('lid-mapping-') && !f.endsWith('_reverse.json') && f.endsWith('.json')) {
+            const content = await readFile(join(authDir, f), 'utf8').catch(() => '');
+            if (content.includes(lidUser)) {
+              const m = f.match(/^lid-mapping-(\d+)\.json$/);
+              if (m && m[1]) {
+                resolvedPn = m[1];
+                break;
               }
             }
           }
@@ -633,9 +631,9 @@ async function resolveJidToPhone(userId, jid, session = null) {
     try {
       const authDir = join(SESSION_DIR, `user_${userId}`);
       const reverseFile = join(authDir, `lid-mapping-${digits}_reverse.json`);
-      if (existsSync(reverseFile)) {
-        const raw = readFileSync(reverseFile, 'utf8').trim();
-        const resolved = JSON.parse(raw);
+      const raw = await readFile(reverseFile, 'utf8').catch(() => null);
+      if (raw) {
+        const resolved = JSON.parse(raw.trim());
         if (resolved) {
           let pn = String(resolved).split('@')[0].split(':')[0].replace(/\D/g, '');
           if (pn.length === 10 && DEFAULT_COUNTRY_CODE) {

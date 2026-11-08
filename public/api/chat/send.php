@@ -69,8 +69,9 @@ $convId = (int) $conv['id'];
 // 3. Insert into chat_messages
 $agentName = !empty($user['name']) ? (string) $user['name'] : 'Agent';
 $insertMsgStmt = $pdo->prepare(
+    // API-01: Record message with initial 'queued' status until worker confirms transmission
     'INSERT INTO chat_messages (user_id, conversation_id, sender_type, sender_name, message_type, body, media_url, status)
-     VALUES (?, ?, \'agent\', ?, ?, ?, ?, \'sent\')'
+     VALUES (?, ?, \'agent\', ?, ?, ?, ?, \'queued\')'
 );
 $insertMsgStmt->execute([$userId, $convId, $agentName, $messageType, $message, $mediaUrl]);
 $messageId = (int) $pdo->lastInsertId();
@@ -100,7 +101,8 @@ json_response([
         'message_type' => $messageType,
         'body' => $message,
         'media_url' => $mediaUrl,
-        'status' => 'sent',
+        // API-01: Accurately report 'queued' lifecycle status
+        'status' => 'queued',
         'created_at' => $now,
         'time' => date('g:i A', strtotime($now)),
     ],
