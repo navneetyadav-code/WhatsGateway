@@ -38,9 +38,10 @@ test('SEC-10: worker/server.mjs gates environment AI keys behind canUseGlobalAiF
     'GROQ_API_KEY fallback must be guarded by canUseGlobalAiFallback'
   );
   assert.equal(
+    serverSource.includes('if (canUseGlobalAiFallback && !aiSettings.custom_api_key && (process.env.CUSTOM_API_KEY || process.env.OPENROUTER_API_KEY))') ||
     serverSource.includes('if (canUseGlobalAiFallback && !aiSettings.openrouter_api_key && process.env.OPENROUTER_API_KEY)'),
     true,
-    'OPENROUTER_API_KEY fallback must be guarded by canUseGlobalAiFallback'
+    'CUSTOM_API_KEY/OPENROUTER_API_KEY fallback must be guarded by canUseGlobalAiFallback'
   );
 });
 
