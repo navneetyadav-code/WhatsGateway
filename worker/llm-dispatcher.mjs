@@ -274,44 +274,133 @@ async function callGroq(apiKey, model, systemPrompt, userMessage, temperature = 
 }
 
 /**
- * Call OpenRouter API (OpenAI compatible fallback)
+ * Call Custom API (OpenAI Compatible) with Autonomous Tool Execution
  */
-async function callOpenRouter(apiKey, model, systemPrompt, userMessage, temperature = 0.4, maxTokens = 500, conversationHistory = []) {
-  const modelName = model || process.env.DEFAULT_OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
-  const url = 'https://openrouter.ai/api/v1/chat/completions';
+async function callCustomApi(apiKey, model, endpoint, systemPrompt, userMessage, temperature = 0.4, maxTokens = 500, conversationHistory = [], toolsContext = null) {
+  const modelName = model || process.env.DEFAULT_CUSTOM_MODEL || 'gpt-4o';
+  let baseEndpoint = (endpoint && String(endpoint).trim()) || process.env.DEFAULT_CUSTOM_ENDPOINT || 'https://api.openai.com/v1';
+  baseEndpoint = baseEndpoint.replace(/\/+$/, '');
+  const url = baseEndpoint.endsWith('/chat/completions') ? baseEndpoint : `${baseEndpoint}/chat/completions`;
 
   const messages = ChatMemoryEngine.buildOpenAiMessages(systemPrompt, conversationHistory, userMessage);
 
-  const payload = {
-    model: modelName,
-    messages,
-    temperature: Number(temperature) || 0.4,
-    max_tokens: Math.max(Number(maxTokens) || 1200, 1000)
-  };
+  let openAiTools = [];
+  if (toolsContext && toolsContext.userId && toolsContext.db) {
+    try {
+      const userTools = toolsContext.scopedTools || await UniversalToolsRegistry.loadUserTools(toolsContext.userId, toolsContext.db);
+      const callerRole = toolsContext.callerRole || 'guest';
+      const geminiDecls = UniversalToolsRegistry.compileDeclarationsForRole(userTools, callerRole);
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://whatsgateway.app',
-      'X-Title': 'WhatsGateway'
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(45000)
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenRouter API error (${response.status}): ${errText}`);
+      openAiTools = geminiDecls.map(decl => ({
+        type: 'function',
+        function: {
+          name: decl.name,
+          description: decl.description || '',
+          parameters: sanitizeJsonSchemaForOpenAi(decl.parameters)
+        }
+      }));
+    } catch (e) {
+      console.error('[LLM Dispatcher] Failed to compile Custom API tools:', e.message);
+    }
   }
 
-  const data = await response.json();
-  const text = (data.choices?.[0]?.message?.content || '').trim();
-  if (!text) {
-    throw new Error('OpenRouter API returned empty text');
+  const maxTurns = 4;
+  let turn = 0;
+  let allowTools = openAiTools.length > 0;
+
+  while (turn < maxTurns) {
+    turn++;
+    const payload = {
+      model: modelName,
+      messages,
+      temperature: Number(temperature) || 0.4,
+      max_tokens: Math.max(Number(maxTokens) || 1200, 1000)
+    };
+
+    if (allowTools && turn < maxTurns) {
+      payload.tools = openAiTools;
+      payload.tool_choice = 'auto';
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey && apiKey.trim()) {
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    }
+
+    let response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000)
+    });
+
+    // If endpoint fails because it does not support tools/function-calling, retry cleanly without tools
+    if (!response.ok && allowTools && turn === 1) {
+      const errPeek = await response.text();
+      if (/tool|function|parameter/i.test(errPeek)) {
+        console.warn(`[Custom API] Endpoint does not support tools (${response.status}), retrying without tools...`);
+        allowTools = false;
+        delete payload.tools;
+        delete payload.tool_choice;
+        response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(45000)
+        });
+      } else {
+        throw new Error(`Custom API error (${response.status}): ${errPeek}`);
+      }
+    }
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Custom API error (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    const choice = data.choices?.[0];
+    if (!choice || !choice.message) {
+      throw new Error('Custom API returned no valid message choices');
+    }
+
+    const assistantMsg = choice.message;
+    messages.push(assistantMsg);
+
+    if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 && toolsContext) {
+      for (const tCall of assistantMsg.tool_calls) {
+        const fnName = tCall.function.name;
+        let fnArgs = {};
+        try {
+          fnArgs = JSON.parse(tCall.function.arguments || '{}');
+        } catch (_) {}
+
+        // Security check: Validate Tool ACL
+        const aclCheck = validateToolAcl(fnName, toolsContext.callerRole || 'guest');
+        let structuredResult;
+        if (!aclCheck.allowed) {
+          structuredResult = { error: aclCheck.reason };
+        } else {
+          structuredResult = await UniversalToolsRegistry.executeTool(fnName, fnArgs, toolsContext);
+        }
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: tCall.id,
+          name: fnName,
+          content: JSON.stringify(structuredResult)
+        });
+      }
+    } else {
+      const text = (assistantMsg.content || '').trim();
+      if (!text) {
+        throw new Error('Custom API returned empty text');
+      }
+      return scrubSecrets(text);
+    }
   }
-  return scrubSecrets(text);
+
+  throw new Error('Custom API function calling loop exceeded max turns');
 }
 
 /**
@@ -322,11 +411,11 @@ export async function dispatchLlmCascade(settings, systemPrompt, customerMessage
   const providers = [];
 
   if (priority === 'gemini') {
-    providers.push('gemini', 'groq', 'openrouter');
+    providers.push('gemini', 'groq', 'custom');
   } else if (priority === 'groq') {
-    providers.push('groq', 'gemini', 'openrouter');
+    providers.push('groq', 'gemini', 'custom');
   } else {
-    providers.push('openrouter', 'gemini', 'groq');
+    providers.push('custom', 'gemini', 'groq');
   }
 
   let lastError = null;
@@ -356,15 +445,18 @@ export async function dispatchLlmCascade(settings, systemPrompt, customerMessage
           toolsContext
         );
       }
-      if (prov === 'openrouter' && settings.openrouter_api_key) {
-        return await callOpenRouter(
-          settings.openrouter_api_key,
-          settings.openrouter_model,
+      const customKey = settings.custom_api_key || settings.openrouter_api_key;
+      if (prov === 'custom' && customKey) {
+        return await callCustomApi(
+          customKey,
+          settings.custom_model || settings.openrouter_model,
+          settings.custom_endpoint,
           systemPrompt,
           customerMessage,
           settings.temperature,
           settings.max_tokens,
-          conversationHistory
+          conversationHistory,
+          toolsContext
         );
       }
     } catch (err) {

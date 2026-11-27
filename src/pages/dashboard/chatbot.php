@@ -9,15 +9,18 @@
  */
 
 $activePriority = $aiSettings['provider_priority'] ?? 'gemini';
+if ($activePriority === 'openrouter') {
+    $activePriority = 'custom';
+}
 $pOrder = match ($activePriority) {
-    'groq' => ['groq', 'gemini', 'openrouter'],
-    'openrouter' => ['openrouter', 'gemini', 'groq'],
-    default => ['gemini', 'groq', 'openrouter'],
+    'groq' => ['groq', 'gemini', 'custom'],
+    'custom' => ['custom', 'gemini', 'groq'],
+    default => ['gemini', 'groq', 'custom'],
 };
 $pNames = [
     'gemini' => 'Google Gemini',
     'groq' => 'Groq LPU',
-    'openrouter' => 'OpenRouter',
+    'custom' => 'Custom API',
 ];
 $activeMode = $aiSettings['agent_mode'] ?? 'support';
 ?>
@@ -111,7 +114,7 @@ $activeMode = $aiSettings['agent_mode'] ?? 'support';
                     <div class="space-y-2 pt-1">
                         <div>
                             <label class="block text-[11px] font-semibold text-slate-700 mb-1">Owner Name / Salute</label>
-                            <input type="text" id="ownerNameInput" name="owner_name" value="<?= e($aiSettings['owner_name'] ?? 'Boss') ?>" placeholder="Boss" class="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors">
+                            <input type="text" id="ownerNameInput" name="owner_name" value="<?= e($aiSettings['owner_name'] ?? ($user['name'] ?? 'Boss')) ?>" placeholder="e.g. <?= e($user['name'] ?? 'Boss') ?>" class="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors">
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -174,18 +177,21 @@ $activeMode = $aiSettings['agent_mode'] ?? 'support';
                             </div>
                         </label>
 
-                        <!-- OpenRouter -->
-                        <?php $oRank = array_search('openrouter', $pOrder, true) + 1; ?>
-                        <label id="cardProvider_openrouter" class="flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer <?= $activePriority === 'openrouter' ? 'bg-emerald-50/50 border-emerald-500 text-slate-900' : 'bg-slate-50/60 border-slate-200 text-slate-700 hover:bg-slate-100/60' ?>">
+                        <!-- Custom API -->
+                        <?php $cRank = array_search('custom', $pOrder, true) + 1; ?>
+                        <label id="cardProvider_custom" class="flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer <?= $activePriority === 'custom' ? 'bg-emerald-50/50 border-emerald-500 text-slate-900' : 'bg-slate-50/60 border-slate-200 text-slate-700 hover:bg-slate-100/60' ?>">
                             <div class="flex items-center gap-2">
-                                <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
-                                <span class="text-xs font-bold">OpenRouter</span>
+                                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                <div>
+                                    <span class="text-xs font-bold block">Custom API</span>
+                                    <span class="text-[9px] text-slate-400">OpenAI Compatible</span>
+                                </div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span id="badgePriority_openrouter" class="px-2 py-0.5 rounded text-[10px] <?= $oRank === 1 ? 'font-bold bg-emerald-100 text-emerald-800' : 'font-semibold bg-slate-200/80 text-slate-600' ?>">
-                                    <?= $oRank === 1 ? '#1 Primary' : '#' . $oRank . ' Fallback' ?>
+                                <span id="badgePriority_custom" class="px-2 py-0.5 rounded text-[10px] <?= $cRank === 1 ? 'font-bold bg-emerald-100 text-emerald-800' : 'font-semibold bg-slate-200/80 text-slate-600' ?>">
+                                    <?= $cRank === 1 ? '#1 Primary' : '#' . $cRank . ' Fallback' ?>
                                 </span>
-                                <input type="radio" name="provider_priority" value="openrouter" <?= $activePriority === 'openrouter' ? 'checked' : '' ?> class="sr-only">
+                                <input type="radio" name="provider_priority" value="custom" <?= $activePriority === 'custom' ? 'checked' : '' ?> class="sr-only">
                             </div>
                         </label>
                     </div>
@@ -395,20 +401,20 @@ DIRECTIVES:
 
     // Priority Cascade Switcher
     function updatePriorityCascade(selectedPriority) {
-        const providers = ['gemini', 'groq', 'openrouter'];
+        const providers = ['gemini', 'groq', 'custom'];
         let priorityOrder = [];
         if (selectedPriority === 'gemini') {
-            priorityOrder = ['gemini', 'groq', 'openrouter'];
+            priorityOrder = ['gemini', 'groq', 'custom'];
         } else if (selectedPriority === 'groq') {
-            priorityOrder = ['groq', 'gemini', 'openrouter'];
+            priorityOrder = ['groq', 'gemini', 'custom'];
         } else {
-            priorityOrder = ['openrouter', 'gemini', 'groq'];
+            priorityOrder = ['custom', 'gemini', 'groq'];
         }
 
         const providerNames = {
             gemini: 'Google Gemini',
             groq: 'Groq LPU',
-            openrouter: 'OpenRouter'
+            custom: 'Custom API'
         };
 
         providers.forEach(p => {

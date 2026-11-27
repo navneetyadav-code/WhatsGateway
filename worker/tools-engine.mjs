@@ -428,7 +428,7 @@ export async function handleDraftEmail(args, context) {
       subject: subject,
       body: body,
       status: 'pending_approval',
-      instruction: `Draft ${draftCode} created. Display this preview to Boss and prompt: "Reply *'Send'* or *'Yes'* to dispatch this email, or tell me what you would like to edit." NEVER claim the email has been sent yet.`
+      instruction: `Draft ${draftCode} created. Display this preview to ${context.ownerName || 'the owner'} and prompt: "Reply *'Send'* or *'Yes'* to dispatch this email, or tell me what you would like to edit." NEVER claim the email has been sent yet.`
     };
   } catch (err) {
     return { error: `Failed to record email draft: ${err.message}` };
@@ -504,7 +504,7 @@ export async function handleConfirmAction(args, context) {
     return {
       success: false,
       denied: true,
-      error: 'Permission Denied: Only an authorized Boss or Admin can approve email dispatch.'
+      error: 'Permission Denied: Only an authorized owner or administrator can approve email dispatch.'
     };
   }
 

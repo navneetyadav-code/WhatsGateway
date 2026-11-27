@@ -4,7 +4,7 @@ declare(strict_types=1);
 $providerNames = [
     'gemini'     => 'Google Gemini',
     'groq'       => 'Groq Cloud',
-    'openrouter' => 'OpenRouter',
+    'custom'     => 'Custom API (OpenAI Compatible)',
 ];
 ?>
 

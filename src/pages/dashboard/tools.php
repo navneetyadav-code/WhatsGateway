@@ -744,7 +744,7 @@
             <div class="flex items-center gap-1.5 text-xs text-slate-500">
                 <span class="text-slate-400">Selected Engine:</span>
                 <button type="button" onclick="openImporterKeySelectorModal()" class="inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-1 rounded-lg cursor-pointer transition-colors" title="Click to switch AI Key or Model">
-                    <span id="footerSelectedKeyText">⚡ Auto Cascade (Gemini → Groq → OpenRouter)</span>
+                    <span id="footerSelectedKeyText" class="inline-flex items-center gap-1"><svg class="w-3 h-3 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg><span>Auto Cascade (Gemini → Groq → Custom API)</span></span>
                     <svg class="w-3 h-3 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
                 </button>
             </div>
@@ -1531,7 +1531,8 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
                             <span class="text-sm font-bold text-slate-950 flex items-center gap-1.5">
-                                <span>⚡ Production Offline cURL Importer</span>
+                                <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                <span>Production Offline cURL Importer</span>
                             </span>
                             <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 uppercase tracking-wider">Fast &amp; Offline</span>
                         </div>
@@ -1557,7 +1558,7 @@
                             <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wider">Recommended</span>
                         </div>
                         <p class="text-xs text-slate-600 mt-1 leading-relaxed">
-                            Automatically routes prompts and docs through your highest-priority keys from AI Credentials (Gemini → Groq → OpenRouter) with failover.
+                            Automatically routes prompts and docs through your highest-priority keys from AI Credentials (Gemini → Groq → Custom API) with failover.
                         </p>
                     </div>
                 </div>
@@ -1580,9 +1581,9 @@
                 } else if (prov === 'groq') {
                     provBadge = 'bg-amber-50 text-amber-800 border-amber-200';
                     provTitle = 'Groq';
-                } else if (prov === 'openrouter') {
-                    provBadge = 'bg-purple-50 text-purple-700 border-purple-200';
-                    provTitle = 'OpenRouter';
+                } else if (prov === 'custom' || prov === 'openrouter') {
+                    provBadge = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                    provTitle = 'Custom API';
                 }
 
                 const statusHtml = (Number(k.is_active) === 0)
@@ -1620,7 +1621,7 @@
             html += `
                 <div class="p-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center space-y-2">
                     <p class="text-xs text-slate-600 font-medium">No custom AI keys configured in your account.</p>
-                    <p class="text-[11px] text-slate-500">Add Gemini, Groq, or OpenRouter keys in AI Credentials to use custom models.</p>
+                    <p class="text-[11px] text-slate-500">Add Gemini, Groq, or Custom API keys in AI Credentials to use custom models.</p>
                     <a href="<?= e(base_url('ai-credentials')) ?>" target="_blank" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">
                         <span>+ Configure Keys at /ai-credentials</span>
                     </a>
@@ -1649,11 +1650,11 @@
         if (selectedAiKeyId === 'offline') {
             selectedAiKeyLabel = 'Offline cURL Parser';
             if (headerLabel) headerLabel.textContent = 'Offline cURL';
-            if (footerLabel) footerLabel.textContent = '⚡ Offline cURL Engine (Deterministic / Zero AI Tokens)';
+            if (footerLabel) footerLabel.innerHTML = '<svg class="w-3 h-3 text-amber-500 shrink-0 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Offline cURL Engine (Deterministic / Zero AI Tokens)';
         } else if (selectedAiKeyId === 'auto') {
             selectedAiKeyLabel = 'Auto Cascade';
             if (headerLabel) headerLabel.textContent = 'Auto Cascade';
-            if (footerLabel) footerLabel.textContent = '🤖 Auto Cascade (AI Multi-Key Failover)';
+            if (footerLabel) footerLabel.innerHTML = '<svg class="w-3 h-3 text-amber-500 shrink-0 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Auto Cascade (AI Multi-Key Failover)';
         } else {
             const keyObj = (availableAiKeysCatalog || []).find(k => String(k.id) === String(selectedAiKeyId));
             const prov = keyObj ? (keyObj.provider || '').toUpperCase() : 'AI';
