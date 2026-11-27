@@ -22,7 +22,9 @@ import {
   detectFrustrationAndEscalation,
   retrieveRelevantKnowledge,
   buildPromptWithRag,
-  generateAiReply
+  generateAiReply,
+  sanitizeInput,
+  detectJailbreakOrInjection
 } from './ai-agent.mjs';
 import { globalDebouncer } from './chat-debouncer.mjs';
 import { globalGreetingCache } from './chat-greeting-cache.mjs';
@@ -34,6 +36,12 @@ import { ChatResolutionEngine } from './chat-resolution.mjs';
 import { detectIntents, composeSkillsAndTools, getRelevantTrainingExamples } from './intent-router.mjs';
 import { UniversalToolsRegistry } from './tools-engine.mjs';
 import { decryptCredential } from './crypto-helper.mjs';
+import {
+  restoreSessionFromDb,
+  clearSessionFromDb,
+  backupSessionToDb,
+  wrapAuthStateWithDbSync
+} from './auth-state-sync.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv(resolve(__dirname, '..', '.env'));
@@ -870,6 +878,22 @@ async function releaseSessionLease(userId, workerId) {
   }
 }
 
+/**
+ * Retries session lease acquisition with backoff.
+ * Smooths rolling deployments on Render where the terminating container hands over to the new container.
+ */
+async function acquireSessionLeaseWithRetry(userId, workerId, leaseSeconds = 30, retries = 4, delayMs = 2500) {
+  for (let i = 0; i <= retries; i++) {
+    const acquired = await acquireSessionLease(userId, workerId, leaseSeconds);
+    if (acquired) return true;
+    if (i < retries) {
+      logger.info({ userId, attempt: i + 1, retries }, 'Session lease held by replica; waiting for handover...');
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  return false;
+}
+
 async function startSession(userId, force = false, waitForReady = true) {
   const session = getSession(userId);
 
@@ -902,8 +926,8 @@ async function startSession(userId, force = false, waitForReady = true) {
   destroySocket(session);
   session.starting = null;
 
-  // DIST-02: Multi-worker collision guard
-  const hasLease = await acquireSessionLease(userId, WORKER_ID, 30);
+  // DIST-02: Multi-worker collision guard with retry for rolling deployment handover
+  const hasLease = await acquireSessionLeaseWithRetry(userId, WORKER_ID, 30);
   if (!hasLease) {
     logger.warn({ userId, workerId: WORKER_ID }, 'Skipping session startup: active lease held by another worker replica');
     session.state = 'disconnected';
@@ -929,12 +953,17 @@ async function startSession(userId, force = false, waitForReady = true) {
       if (!isRegistered) {
         logger.info({ userId, authDir }, 'Removing stale unregistered WhatsApp auth before starting new QR flow');
         await rm(authDir, { recursive: true, force: true });
+        await clearSessionFromDb(userId, db, logger);
       }
     } catch (_) {}
   }
 
   session.starting = (async () => {
-    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    // Restore session keys from MySQL if local files were wiped (e.g. Render redeploy)
+    await restoreSessionFromDb(userId, authDir, db, logger);
+
+    const rawAuthState = await useMultiFileAuthState(authDir);
+    const { state, saveCreds } = wrapAuthStateWithDbSync(userId, authDir, rawAuthState.state, rawAuthState.saveCreds, db, logger);
     
     let version;
     try {
@@ -1030,6 +1059,8 @@ async function startSession(userId, force = false, waitForReady = true) {
           session.pushName = sock.user?.name || sock.user?.verifiedName || null;
           try { session.profilePicture = await sock.profilePictureUrl(sock.user.id, 'image'); } catch(e) { session.profilePicture = null; }
           await updateSessionRecord(userId, session);
+          // Persist full auth state snapshot to MySQL to ensure immediate survivability
+          await backupSessionToDb(userId, authDir, db, logger).catch(() => {});
 
           // WhatsApp device detected/connected: release all waiting queued messages immediately!
           try {
@@ -1064,6 +1095,7 @@ async function startSession(userId, force = false, waitForReady = true) {
           if (isLoggedOut || isBadSession) {
             destroySocket(session);
             try { await rm(authDir, { recursive: true, force: true }); } catch (e) {}
+            try { await clearSessionFromDb(userId, db, logger); } catch (e) {}
             session.state = 'idle';
             session.qr = null;
             session.hasQr = false;
@@ -1106,6 +1138,7 @@ async function startSession(userId, force = false, waitForReady = true) {
           if (isQrExpired) {
             destroySocket(session);
             try { await rm(authDir, { recursive: true, force: true }); } catch (e) {}
+            try { await clearSessionFromDb(userId, db, logger); } catch (e) {}
             session.state = 'idle';
             session.qr = null;
             session.hasQr = false;
@@ -2012,6 +2045,27 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                               console.warn('[Server] Failed to query pending actions:', actionErr.message);
                             }
 
+                            // AI Security Guard: Input sanitization & anti-injection shield
+                            consolidatedText = sanitizeInput(consolidatedText);
+                            const injectionCheck = detectJailbreakOrInjection(consolidatedText);
+                            if (injectionCheck.isJailbreak) {
+                              logger.warn({ userId, senderPhone, reason: injectionCheck.reason }, '[AI Security] Blocked prompt injection / jailbreak attempt');
+                              const blockReply = isPersonalMode
+                                ? "Security Notice: System override and internal prompt extraction commands are restricted."
+                                : "I am an official customer support assistant for our organization and cannot process system override commands.";
+                              await queueBotReply(
+                                userId,
+                                msg.key.remoteJid,
+                                senderPhone,
+                                blockReply,
+                                conv.id,
+                                activeSessionUuid,
+                                'AI Assistant',
+                                { incrementConsecutive: true }
+                              );
+                              return;
+                            }
+
                             // Dynamic Intent Routing & Adaptive Tool Composition
                             const detectedIntents = await detectIntents(consolidatedText, { pendingAction });
                             const allUserTools = await UniversalToolsRegistry.loadUserTools(userId, db);
@@ -2033,12 +2087,20 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                             });
                             const contactName = conv.contact_name || msg.pushName || 'User';
 
+                            const activeSystemPrompt = (isPersonalMode && toolsConfig?.personal_system_prompt)
+                              ? toolsConfig.personal_system_prompt
+                              : aiSettings.system_prompt;
+                            const activeInternalPrompt = isPersonalMode
+                              ? toolsConfig?.personal_internal_prompt
+                              : toolsConfig?.support_internal_prompt;
+
                             const { systemPrompt, userMessage } = buildPromptWithRag(
-                              aiSettings.system_prompt,
+                              activeSystemPrompt,
                               relevantChunks,
                               consolidatedText,
                               {
                                 agentMode: aiSettings.agent_mode || 'support',
+                                internalPrompt: activeInternalPrompt,
                                 ownerName: aiSettings.owner_name || '',
                                 skillDirectives,
                                 factsText: userFacts.factsText,
@@ -3355,6 +3417,9 @@ app.post('/sessions/:userId/logout', async (req, res) => {
     try {
       await rm(authDir, { recursive: true, force: true });
     } catch (e) {}
+    try {
+      await clearSessionFromDb(req.params.userId, db, logger);
+    } catch (e) {}
   }
 
   sessions.set(req.params.userId, emptySession(req.params.userId));
@@ -3400,6 +3465,32 @@ app.post('/sessions/:userId/auto-sleep', async (req, res) => {
     auto_sleep_enabled: enabled,
     auto_sleep_timeout_seconds: timeoutSeconds
   });
+});
+
+app.post('/sessions/:userId/storage-driver', async (req, res) => {
+  const userId = req.params.userId;
+  const rawDriver = String(req.body?.storage_driver || '').trim().toLowerCase();
+  const driver = (rawDriver === 'persistent_disk') ? 'persistent_disk' : 'database_encrypted';
+  const authDir = join(SESSION_DIR, `user_${userId}`);
+
+  try {
+    await db.execute(
+      `UPDATE whatsapp_sessions SET storage_driver = ? WHERE user_id = ?`,
+      [driver, userId]
+    );
+
+    if (driver === 'persistent_disk') {
+      // Purge database copies to enforce strict persistent disk isolation
+      await clearSessionFromDb(userId, db, logger);
+    } else {
+      // Encrypted database mode: immediately back up current keys from disk if present
+      await backupSessionToDb(userId, authDir, db, logger);
+    }
+
+    res.json({ ok: true, user_id: Number(userId), storage_driver: driver });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/sessions/:userId/sleep', async (req, res) => {
@@ -3574,11 +3665,24 @@ async function startWorker() {
   });
   attachClientErrorDiagnostics(server, logger);
 
-  // DIST-04: Graceful shutdown hook - flush all active in-flight debouncer messages before exit
+  // DIST-04: Graceful shutdown hook - flush in-flight debouncer, back up sessions, and release leases before exit
   const handleGracefulShutdown = async (signal) => {
-    logger.info({ signal }, 'Received termination signal, flushing in-flight debouncer buffers...');
+    logger.info({ signal }, 'Received termination signal, starting graceful shutdown...');
     try {
       await globalDebouncer.flushAll();
+    } catch (e) {}
+    try {
+      for (const [uid, sess] of sessions.entries()) {
+        if (sess?.sock) {
+          const sDir = join(SESSION_DIR, `user_${uid}`);
+          await backupSessionToDb(uid, sDir, db, logger).catch(() => {});
+          try { sess.sock.end(); } catch (_) {}
+        }
+      }
+      await db.execute(
+        'UPDATE whatsapp_sessions SET locked_by = NULL, lease_expires_at = NULL WHERE locked_by = ?',
+        [WORKER_ID]
+      );
     } catch (e) {}
     process.exit(0);
   };

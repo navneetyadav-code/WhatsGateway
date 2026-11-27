@@ -67,8 +67,10 @@ $sections = [
     'campaigns' => ['data' => 'campaigns.data.php', 'view' => 'campaigns.php'],
     'webhooks'  => ['data' => 'webhooks.data.php',  'view' => 'webhooks.php'],
     'audit'     => ['data' => 'audit.data.php',     'view' => 'audit.php'],
-    'chatbot'     => ['data' => 'chatbot.data.php',     'view' => 'chatbot.php'],
-    'ai-agent'    => ['data' => 'chatbot.data.php',     'view' => 'chatbot.php'],
+    'chatbot'            => ['data' => ($isPersonalMode ? 'personal-assistant.data.php' : 'support-bot.data.php'), 'view' => ($isPersonalMode ? 'personal-assistant.php' : 'support-bot.php')],
+    'ai-agent'           => ['data' => ($isPersonalMode ? 'personal-assistant.data.php' : 'support-bot.data.php'), 'view' => ($isPersonalMode ? 'personal-assistant.php' : 'support-bot.php')],
+    'support-bot'        => ['data' => 'support-bot.data.php', 'view' => 'support-bot.php'],
+    'personal-assistant' => ['data' => 'personal-assistant.data.php', 'view' => 'personal-assistant.php'],
     'knowledge'   => ['data' => 'knowledge.data.php',   'view' => 'knowledge.php'],
     'tools'       => ['data' => 'tools.data.php',       'view' => 'tools.php'],
     'app-store'   => ['data' => 'app-store.data.php',   'view' => 'app-store.php'],
@@ -80,6 +82,7 @@ $sections = [
     'ai-keys'        => ['data' => 'ai-credentials.data.php', 'view' => 'ai-credentials.php'],
     'memory'         => ['data' => 'memory.data.php',         'view' => 'memory.php'],
     'training'       => ['data' => 'memory.data.php',         'view' => 'memory.php'],
+    'settings'       => ['data' => 'settings.data.php',       'view' => 'settings.php'],
 ];
 
 if (!isset($sections[$section])) {

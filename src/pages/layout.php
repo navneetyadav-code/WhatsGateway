@@ -172,8 +172,25 @@ $isPersonalMode = ($agentMode === 'personal');
                 overflow-x: hidden;
             }
         }
-        .sidebar-scroll { scrollbar-width: none; -ms-overflow-style: none; }
-        .sidebar-scroll::-webkit-scrollbar { display: none; }
+        .sidebar-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 transparent;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .sidebar-scroll::-webkit-scrollbar {
+            width: 5px;
+        }
+        .sidebar-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .sidebar-scroll::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 9999px;
+        }
+        .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
         .sidebar-category + .sidebar-category { margin-top: 24px; }
         .sidebar-category-title {
             color: #64748b;

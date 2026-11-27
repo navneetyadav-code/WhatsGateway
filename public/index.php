@@ -59,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET'
 }
 
 $publicPages = ['login', 'register', 'docs', 'forgot-password', 'google-auth', 'google-contacts', 'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'tos', 'home', 'api', 'send', 'messages', 'api-contacts', 'contacts-api', 'api-contacts-batch', 'contacts-batch', 'api-contacts-delete', 'contacts-delete', 'api-groups', 'groups-api'];
-$dashboardPages = ['dashboard', 'live-chat', 'message', 'groups', 'device', 'api-keys', 'queue', 'contacts', 'feedback', 'webhooks', 'campaigns', 'audit', 'chatbot', 'ai-agent', 'knowledge', 'tools', 'app-store', 'presets', 'escalations', 'rules', 'keyword-rules', 'security', 'ai-credentials', 'ai-keys', 'memory', 'training'];
+$dashboardPages = ['dashboard', 'live-chat', 'message', 'groups', 'device', 'api-keys', 'queue', 'contacts', 'feedback', 'webhooks', 'campaigns', 'audit', 'chatbot', 'ai-agent', 'knowledge', 'tools', 'app-store', 'presets', 'escalations', 'rules', 'keyword-rules', 'security', 'ai-credentials', 'ai-keys', 'memory', 'training', 'settings'];
 
 if ($page === 'logout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     verify_csrf();
@@ -663,10 +663,38 @@ if ($page === 'ai-agent-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$userId]);
     }
 
+    // Persist tools_config updates (admin_phones, personal_system_prompt, internal prompts, screening_policy)
+    if (isset($_POST['admin_phones']) || isset($_POST['personal_system_prompt']) || isset($_POST['support_internal_prompt']) || isset($_POST['personal_internal_prompt']) || isset($_POST['screening_policy'])) {
+        $cfgStmt = $pdo->prepare('SELECT tools_config FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
+        $cfgStmt->execute([$userId]);
+        $existingCfg = json_decode((string) ($cfgStmt->fetchColumn() ?: '{}'), true) ?: [];
+
+        if (isset($_POST['admin_phones'])) {
+            $rawPhones = trim((string) $_POST['admin_phones']);
+            $existingCfg['admin_phones'] = array_values(array_filter(array_map('trim', explode(',', $rawPhones))));
+        }
+        if (isset($_POST['personal_system_prompt'])) {
+            $existingCfg['personal_system_prompt'] = trim((string) $_POST['personal_system_prompt']);
+        }
+        if (isset($_POST['support_internal_prompt'])) {
+            $existingCfg['support_internal_prompt'] = trim((string) $_POST['support_internal_prompt']);
+        }
+        if (isset($_POST['personal_internal_prompt'])) {
+            $existingCfg['personal_internal_prompt'] = trim((string) $_POST['personal_internal_prompt']);
+        }
+        if (isset($_POST['screening_policy'])) {
+            $existingCfg['screening_policy'] = trim((string) $_POST['screening_policy']);
+        }
+
+        $pdo->prepare('UPDATE ai_agent_settings SET tools_config = ? WHERE user_id = ?')
+            ->execute([json_encode($existingCfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), $userId]);
+    }
+
+    $targetRoute = $agentMode === 'personal' ? 'personal-assistant' : 'support-bot';
     flash('success', $agentMode === 'personal'
-        ? '⚡ Personal AI Assistant activated! Operating 24/7 with zero escalation and feedback reviews closed.'
-        : '🏢 AI Support Agent configuration updated successfully.');
-    redirect_to('index.php?page=chatbot');
+        ? 'Personal AI Assistant configuration updated successfully.'
+        : 'Customer Support Agent configuration updated successfully.');
+    redirect_to('index.php?page=' . $targetRoute);
 }
 
 if ($page === 'custom-tool-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -1364,7 +1392,174 @@ if ($page === 'session-auto-sleep' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (\Throwable $e) {}
 
     flash('success', 'Auto-Sleep settings updated successfully.');
-    redirect_to('index.php?page=device');
+    $returnTo = ($_POST['return_to'] ?? '') === 'settings' ? 'settings' : 'device';
+    redirect_to("index.php?page={$returnTo}");
+}
+
+if ($page === 'settings-storage-driver' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = require_auth();
+    verify_csrf();
+    $rawDriver = trim((string) ($_POST['storage_driver'] ?? 'database_encrypted'));
+    $driver = ($rawDriver === 'persistent_disk') ? 'persistent_disk' : 'database_encrypted';
+
+    $stmt = Database::pdo()->prepare(
+        'UPDATE whatsapp_sessions SET storage_driver = ?, updated_at = NOW() WHERE user_id = ?'
+    );
+    $stmt->execute([$driver, (int) $user['id']]);
+
+    try {
+        worker_request('POST', "sessions/{$user['id']}/storage-driver", [
+            'storage_driver' => $driver,
+        ], 5);
+    } catch (\Throwable $e) {}
+
+    $driverName = $driver === 'persistent_disk' ? 'Persistent Disk' : 'Encrypted Database';
+    flash('success', "Session memory storage driver updated to {$driverName}.");
+    redirect_to('index.php?page=settings');
+}
+
+if (($page === 'settings-security' || $page === 'security' || ($page === 'settings' && isset($_POST['action']))) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = require_auth();
+    verify_csrf();
+    $userId = (int) $user['id'];
+    $sec = get_user_security($userId);
+    $action = (string) ($_POST['action'] ?? '');
+
+    if ($action === 'change_password') {
+        $currentPassword = (string) ($_POST['current_password'] ?? '');
+        $newPassword = (string) ($_POST['new_password'] ?? '');
+        $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
+
+        $stmt = Database::pdo()->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $currUser = $stmt->fetch();
+
+        if (empty($currUser['password_hash']) || !password_verify($currentPassword, (string) $currUser['password_hash'])) {
+            flash('error', 'Your current password was entered incorrectly.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        if (strlen($newPassword) < 8) {
+            flash('error', 'The new password must be at least 8 characters long.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        if ($newPassword !== $confirmPassword) {
+            flash('error', 'The new password confirmation does not match.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        update_user_password($userId, $newPassword);
+        flash('success', 'Your account password has been updated.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    if ($action === 'set_password') {
+        $newPassword = (string) ($_POST['new_password'] ?? '');
+        $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
+
+        if (strlen($newPassword) < 8) {
+            flash('error', 'The password must be at least 8 characters long.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        if ($newPassword !== $confirmPassword) {
+            flash('error', 'The password confirmation does not match.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        update_user_password($userId, $newPassword);
+        flash('success', 'Password set successfully. You can now use your password or Google to sign in.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    if ($action === 'confirm_totp') {
+        $code = trim((string) ($_POST['totp_code'] ?? ''));
+        $secret = trim((string) ($_SESSION['pending_totp_secret'] ?? ''));
+
+        if ($secret === '' || !totp_verify($secret, $code)) {
+            flash('error', 'Invalid 6-digit verification code. Please check your authenticator app and try again.');
+            redirect_to('index.php?page=settings&tab=security&setup_2fa=1');
+        }
+
+        $backupCodes = enable_user_totp($userId, $secret);
+        unset($_SESSION['pending_totp_secret']);
+        $_SESSION['newly_generated_backup_codes'] = $backupCodes;
+        flash('success', 'Two-factor authentication (TOTP) has been enabled.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    if ($action === 'disable_totp') {
+        $password = (string) ($_POST['password'] ?? '');
+        $code = trim((string) ($_POST['totp_code'] ?? ''));
+
+        $stmt = Database::pdo()->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $currUser = $stmt->fetch();
+
+        $authorized = false;
+        if (!empty($currUser['password_hash']) && password_verify($password, (string) $currUser['password_hash'])) {
+            $authorized = true;
+        } elseif (!empty($sec['totp_secret']) && totp_verify($sec['totp_secret'], $code)) {
+            $authorized = true;
+        }
+
+        if (!$authorized) {
+            flash('error', 'Confirmation failed. Enter your current password or an authenticator code to disable 2FA.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        disable_user_totp($userId);
+        flash('success', 'Two-factor authentication has been disabled.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    if ($action === 'regenerate_backup_codes') {
+        if (empty($sec['totp_enabled'])) {
+            flash('error', 'Two-factor authentication must be enabled to generate backup codes.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        $password = (string) ($_POST['password'] ?? '');
+        $code = trim((string) ($_POST['totp_code'] ?? ''));
+
+        $stmt = Database::pdo()->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $currUser = $stmt->fetch();
+
+        $authorized = false;
+        if (!empty($currUser['password_hash']) && password_verify($password, (string) $currUser['password_hash'])) {
+            $authorized = true;
+        } elseif (!empty($sec['totp_secret']) && totp_verify($sec['totp_secret'], $code)) {
+            $authorized = true;
+        }
+
+        if (!$authorized) {
+            flash('error', 'Confirmation failed. Enter your password or 6-digit TOTP code to regenerate recovery codes.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        $backup = generate_backup_codes(8);
+        $stmt = Database::pdo()->prepare('UPDATE user_security SET backup_codes = ? WHERE user_id = ?');
+        $stmt->execute([json_encode($backup['hashed']), $userId]);
+        $_SESSION['newly_generated_backup_codes'] = $backup['plain'];
+
+        flash('success', 'New recovery backup codes generated. Previous codes have been invalidated.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    if ($action === 'unlink_google') {
+        if (!can_unlink_google($userId)) {
+            flash('error', 'Cannot disconnect Google account: You must set an account password first so you do not get locked out.');
+            redirect_to('index.php?page=settings&tab=security');
+        }
+
+        unlink_google_account($userId);
+        flash('success', 'Google account disconnected successfully. You can now sign in using your email and password.');
+        redirect_to('index.php?page=settings&tab=security');
+    }
+
+    redirect_to('index.php?page=settings&tab=security');
 }
 
 if ($page === 'webhook' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -1471,6 +1666,11 @@ if ($page === 'api-contacts-delete' || $page === 'contacts-delete') {
     exit;
 }
 
+if ($page === 'security') {
+    $qs = !empty($_GET['setup_2fa']) ? '&tab=security&setup_2fa=1' : '&tab=security';
+    redirect_to('index.php?page=settings' . $qs);
+}
+
 if (!in_array($page, $publicPages, true)) {
     $user = require_auth();
 }
@@ -1479,7 +1679,6 @@ $view = match (true) {
     $page === 'login' => dirname(__DIR__) . '/src/pages/login.php',
     $page === 'register' => dirname(__DIR__) . '/src/pages/register.php',
     $page === 'docs' => dirname(__DIR__) . '/src/pages/docs.php',
-    $page === 'security' => dirname(__DIR__) . '/src/pages/security.php',
     in_array($page, $dashboardPages, true) => dirname(__DIR__) . '/src/pages/dashboard.php',
     default => dirname(__DIR__) . '/src/pages/dashboard.php',
 };
