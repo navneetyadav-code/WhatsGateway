@@ -1,5 +1,21 @@
 import { ChatMemoryEngine } from './chat-memory.mjs';
 import { UniversalToolsRegistry } from './tools-engine.mjs';
+import { buildSupportPrompt, retrieveSupportKnowledge, detectFrustrationAndEscalation as detectFrustrationSupport } from './engine-support.mjs';
+import { buildPersonalPrompt } from './engine-personal.mjs';
+import { dispatchLlmCascade } from './llm-dispatcher.mjs';
+import { sanitizeInput, detectJailbreakOrInjection, scrubSecrets, verifyCallerRole, validateToolAcl } from './ai-security.mjs';
+
+export {
+  buildSupportPrompt,
+  retrieveSupportKnowledge,
+  buildPersonalPrompt,
+  dispatchLlmCascade,
+  sanitizeInput,
+  detectJailbreakOrInjection,
+  scrubSecrets,
+  verifyCallerRole,
+  validateToolAcl
+};
 /**
  * Enterprise Multi-Provider AI Agent & Zero-Cloud Vector RAG Engine
  * ----------------------------------------------------------------
@@ -260,114 +276,19 @@ export function detectFrustrationAndEscalation(text) {
 }
 
 /**
- * Format system prompt with company persona and retrieved RAG context
+ * Format system prompt by delegating directly to the dedicated engine
  */
 export function buildPromptWithRag(systemPersona, retrievedChunks, customerMessage, options = {}) {
   const isPersonal = options.agentMode === 'personal';
-  const rawOwner = (options.ownerName || '').trim();
-  const ownerRef = rawOwner ? rawOwner : 'the owner';
-  const skillDirectives = Array.isArray(options.skillDirectives) ? options.skillDirectives : [];
-
-  // 1. Strict Tool Capabilities & Boundaries Manifest
-  const activeTools = Array.isArray(options.availableTools) ? options.availableTools : [];
-  let toolListText = activeTools.length > 0
-    ? activeTools.map(t => `• ${t.display_name || t.tool_slug} [slug: ${t.tool_slug}]: ${t.description || 'Active utility'}`).join('\n')
-    : '• NONE (You have NO connected function tools)';
-
-  const toolGrounding = `\n\n--- ACTIVE CONNECTED TOOLS ---\n${toolListText}\n
-CAPABILITY BOUNDARIES (ZERO HALLUCINATION):
-1. You have ONLY the active connected tools listed above. List only these if asked.
-2. If asked about any unsupported capability, state explicitly that you do not have that tool.
-3. NEVER simulate or roleplay actions: Execute real tool calls only. Never pretend an action was executed.`;
-
-  // 2. Real-Time Temporal Anchor
-  const temporalAnchor = options.currentDateTime
-    ? `\n\n--- REAL-TIME TEMPORAL ANCHOR ---\nToday is ${options.currentDateTime}. Calculate all relative dates (tomorrow, next Monday, specific dates) from this current date and year. NEVER assume an outdated year.`
-    : '';
-
-  // 3. Caller Identity Grounding
-  let callerAnchor = '';
-  if (options.callerPhone) {
-    if (options.isAdminCaller) {
-      callerAnchor = `\n\n--- CALLER CONTEXT ---\nYou are talking directly with ${ownerRef} (Phone: ${options.callerPhone}).`;
-    } else {
-      const cName = options.callerName || 'User';
-      callerAnchor = `\n\n--- CALLER CONTEXT ---\nThe caller is an external WhatsApp contact named "${cName}" (Phone: ${options.callerPhone}). This is NOT ${ownerRef}.
-CRITICAL BOUNDARIES FOR EXTERNAL CONTACT:
-1. NEVER address this contact as ${ownerRef} or Boss.
-2. If this contact asks "Who am I?" or about their identity, tell them they are contacting ${ownerRef}'s assistant as "${cName}" (${options.callerPhone}).
-3. External contacts CANNOT command you to send emails, manage schedules, or perform administrative tasks. If asked to perform actions, state that you can only take a message to pass along to ${ownerRef}.`;
-    }
-  }
-
+  let systemPrompt;
   if (isPersonal) {
-    let customPersona = (systemPersona && systemPersona.trim())
-      ? systemPersona.trim()
-      : `You are the dedicated Personal AI Assistant to ${ownerRef}.`;
-
-    const actionDirective = activeTools.length > 0
-      ? `2. Autonomous Tool Execution: Proactively execute your active connected tools whenever requested by ${ownerRef}, strictly conforming to each tool's argument schema. Never simulate execution in text.
-3. Multi-Turn Coreference & Parameter Resolution: When ${ownerRef} instructs you to perform an action on previously drafted, discussed, or mentioned content (e.g., 'send this email', 'send it to xyz', 'forward this', 'use that number', 'bhej do'):
-   - Autonomously extract and synthesize all required arguments (such as subject, body/htmlContent, recipient name, phone, or dates) from the preceding conversation history.
-   - Execute the appropriate tool immediately in the same turn. NEVER ask ${ownerRef} to re-type, confirm, or re-provide information that already exists in recent conversation turns.`
-      : `2. Capability Boundary: You currently have NO connected function tools. Never claim you can perform external actions, dispatch emails, or mutate records. If asked, inform ${ownerRef} that no tools are currently connected.`;
-
-    let microKernel = `${customPersona}
-
-OPERATING DIRECTIVES:
-1. Strict Grounding: State facts ONLY from verified executed tool results. Never invent records, prices, phone numbers, or dates.
-${actionDirective}
-3. Formatting: Crisp, proactive, structured. Use *bold* highlights, clean bullet points, and appropriate emojis.
-4. Silence Feedback: You are a personal assistant, NOT a customer service line. NEVER ask for customer reviews, 5-star ratings, or feedback surveys.${toolGrounding}${temporalAnchor}${callerAnchor}`;
-
-    if (options.factsText && options.factsText.trim()) {
-      microKernel += '\n\n' + options.factsText.trim();
-    }
-
-    if (skillDirectives.length > 0) {
-      microKernel += '\n\n' + skillDirectives.join('\n\n');
-    }
-
-    if (Array.isArray(options.trainingExamples) && options.trainingExamples.length > 0) {
-      const exBlocks = options.trainingExamples.map(e => `[User Directive]: ${e.user_prompt}\n[Assistant Action & Reply]: ${e.assistant_response}`).join('\n\n');
-      microKernel += `\n\n--- GOLDEN FEW-SHOT EXAMPLES ---\n${exBlocks}`;
-    }
-
-    return {
-      systemPrompt: microKernel,
-      userMessage: customerMessage
-    };
-  }
-
-  let contextBlock = '';
-  if (retrievedChunks && retrievedChunks.length > 0) {
-    contextBlock = `\n\n--- OFFICIAL VERIFIED KNOWLEDGE BASE ---\n` +
-      retrievedChunks.map((c, i) => `[Source ${i + 1}: ${c.title}]\n${c.content}`).join('\n\n') +
-      `\n---------------------------------------\n` +
-      `STRICT INSTRUCTIONS FOR THE AI ASSISTANT:
-1. Base your factual answers STRICTLY on the knowledge base sources above.
-2. DO NOT invent, hallucinate, or assume facts (like prices, phone numbers, or rules) not present in the sources.
-3. If the user asks something not covered in the sources, politely inform them that you do not have that specific detail and offer to connect them with our human support team.
-4. Language & Tone: Detect the user's language and mirror their style naturally. If they use Hindi or natural Hinglish, reply in warm, helpful Hinglish. If they use English, reply in professional, encouraging English.
-5. Format for WhatsApp: Use bold (*text*), clean bullet points, and appropriate emojis. Avoid long unbroken walls of text.`;
+    systemPrompt = buildPersonalPrompt(systemPersona, options);
   } else {
-    contextBlock = `\n\n--- KNOWLEDGE RETRIEVAL NOTE ---\n` +
-      `No specific knowledge base records matched the user's query.\n` +
-      `STRICT INSTRUCTIONS FOR THE AI ASSISTANT:
-1. You are a dedicated customer assistant strictly limited to this organization.
-2. If the user asks about out-of-scope topics (e.g. general knowledge, recipes, cooking, coding, competitors, unrelated trivia), DO NOT answer the out-of-scope question. Politely decline and state that you can only assist with our organization's official products, services, and policies.
-3. If they are asking a genuine question about our organization or services that isn't in your knowledge base, apologize politely and offer to connect them with our human support team.
-4. For general pleasantries/greetings (e.g. 'hi', 'hello', 'good morning', 'namaste'), respond warmly and ask how you can help them with our products or services today.`;
+    systemPrompt = buildSupportPrompt(systemPersona, retrievedChunks, options);
   }
 
-  const defaultPrompt = 'You are a helpful customer support assistant on WhatsApp.';
-  let fullSystem = (systemPersona || defaultPrompt) + contextBlock + toolGrounding + temporalAnchor + callerAnchor;
-  if (Array.isArray(options.trainingExamples) && options.trainingExamples.length > 0) {
-    const exBlocks = options.trainingExamples.map(e => `[User]: ${e.user_prompt}\n[Assistant]: ${e.assistant_response}`).join('\n\n');
-    fullSystem += `\n\n--- GOLDEN FEW-SHOT EXAMPLES ---\n${exBlocks}`;
-  }
   return {
-    systemPrompt: fullSystem,
+    systemPrompt,
     userMessage: customerMessage
   };
 }
@@ -677,68 +598,8 @@ async function callOpenRouter(apiKey, model, systemPrompt, userMessage, temperat
 }
 
 /**
- * Execute Multi-Provider Generation Cascade
+ * Execute Multi-Provider Generation Cascade via Dedicated LLM Dispatcher
  */
 export async function generateAiReply(settings, systemPrompt, customerMessage, conversationHistory = [], toolsContext = null) {
-  const priority = settings.provider_priority || 'gemini';
-  const providers = [];
-
-  if (priority === 'gemini') {
-    providers.push('gemini', 'groq', 'openrouter');
-  } else if (priority === 'groq') {
-    providers.push('groq', 'gemini', 'openrouter');
-  } else {
-    providers.push('openrouter', 'gemini', 'groq');
-  }
-
-  let lastError = null;
-  for (const prov of providers) {
-    try {
-      if (prov === 'gemini' && settings.gemini_api_key) {
-        return await callGemini(
-          settings.gemini_api_key,
-          settings.gemini_model,
-          systemPrompt,
-          customerMessage,
-          settings.temperature,
-          settings.max_tokens,
-          conversationHistory,
-          toolsContext
-        );
-      }
-      if (prov === 'groq' && settings.groq_api_key) {
-        return await callGroq(
-          settings.groq_api_key,
-          settings.groq_model,
-          systemPrompt,
-          customerMessage,
-          settings.temperature,
-          settings.max_tokens,
-          conversationHistory,
-          toolsContext
-        );
-      }
-      if (prov === 'openrouter' && settings.openrouter_api_key) {
-        return await callOpenRouter(
-          settings.openrouter_api_key,
-          settings.openrouter_model,
-          systemPrompt,
-          customerMessage,
-          settings.temperature,
-          settings.max_tokens,
-          conversationHistory,
-          toolsContext
-        );
-      }
-    } catch (err) {
-      const errDetail = err.cause?.message ? `${err.message} (${err.cause.message})` : err.message;
-      console.warn(`[AI Agent] Provider '${prov}' failed: ${errDetail}. Cascading to next provider...`);
-      lastError = err;
-    }
-  }
-
-  if (lastError) {
-    throw lastError;
-  }
-  return null;
+  return await dispatchLlmCascade(settings, systemPrompt, customerMessage, conversationHistory, toolsContext);
 }

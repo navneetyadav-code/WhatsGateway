@@ -663,10 +663,32 @@ if ($page === 'ai-agent-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ->execute([$userId]);
     }
 
+    // Persist tools_config updates (admin_phones, personal_system_prompt, screening_policy)
+    if (isset($_POST['admin_phones']) || isset($_POST['personal_system_prompt']) || isset($_POST['screening_policy'])) {
+        $cfgStmt = $pdo->prepare('SELECT tools_config FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
+        $cfgStmt->execute([$userId]);
+        $existingCfg = json_decode((string) ($cfgStmt->fetchColumn() ?: '{}'), true) ?: [];
+
+        if (isset($_POST['admin_phones'])) {
+            $rawPhones = trim((string) $_POST['admin_phones']);
+            $existingCfg['admin_phones'] = array_values(array_filter(array_map('trim', explode(',', $rawPhones))));
+        }
+        if (isset($_POST['personal_system_prompt'])) {
+            $existingCfg['personal_system_prompt'] = trim((string) $_POST['personal_system_prompt']);
+        }
+        if (isset($_POST['screening_policy'])) {
+            $existingCfg['screening_policy'] = trim((string) $_POST['screening_policy']);
+        }
+
+        $pdo->prepare('UPDATE ai_agent_settings SET tools_config = ? WHERE user_id = ?')
+            ->execute([json_encode($existingCfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), $userId]);
+    }
+
+    $targetRoute = $agentMode === 'personal' ? 'personal-assistant' : 'support-bot';
     flash('success', $agentMode === 'personal'
         ? '⚡ Personal AI Assistant activated! Operating 24/7 with zero escalation and feedback reviews closed.'
-        : '🏢 AI Support Agent configuration updated successfully.');
-    redirect_to('index.php?page=chatbot');
+        : '🏢 Customer Support Agent configuration updated successfully.');
+    redirect_to('index.php?page=' . $targetRoute);
 }
 
 if ($page === 'custom-tool-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {

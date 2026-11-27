@@ -242,9 +242,9 @@ $navigation = [
         'icon' => 'ai',
         'items' => [
             [
-                'label' => 'AI Agent Studio',
-                'page' => 'chatbot',
-                'pages' => ['chatbot', 'ai-agent'],
+                'label' => $isPersonalMode ? 'Personal Assistant' : 'Customer Support Bot',
+                'page' => $isPersonalMode ? 'personal-assistant' : 'support-bot',
+                'pages' => ['chatbot', 'ai-agent', 'support-bot', 'personal-assistant'],
                 'icon' => 'bot',
             ],
             [

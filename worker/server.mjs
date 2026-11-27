@@ -22,7 +22,9 @@ import {
   detectFrustrationAndEscalation,
   retrieveRelevantKnowledge,
   buildPromptWithRag,
-  generateAiReply
+  generateAiReply,
+  sanitizeInput,
+  detectJailbreakOrInjection
 } from './ai-agent.mjs';
 import { globalDebouncer } from './chat-debouncer.mjs';
 import { globalGreetingCache } from './chat-greeting-cache.mjs';
@@ -2012,6 +2014,27 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                               console.warn('[Server] Failed to query pending actions:', actionErr.message);
                             }
 
+                            // AI Security Guard: Input sanitization & anti-injection shield
+                            consolidatedText = sanitizeInput(consolidatedText);
+                            const injectionCheck = detectJailbreakOrInjection(consolidatedText);
+                            if (injectionCheck.isJailbreak) {
+                              logger.warn({ userId, senderPhone, reason: injectionCheck.reason }, '[AI Security] Blocked prompt injection / jailbreak attempt');
+                              const blockReply = isPersonalMode
+                                ? "Security Notice: System override and internal prompt extraction commands are restricted."
+                                : "I am an official customer support assistant for our organization and cannot process system override commands.";
+                              await queueBotReply(
+                                userId,
+                                msg.key.remoteJid,
+                                senderPhone,
+                                blockReply,
+                                conv.id,
+                                activeSessionUuid,
+                                'AI Assistant',
+                                { incrementConsecutive: true }
+                              );
+                              return;
+                            }
+
                             // Dynamic Intent Routing & Adaptive Tool Composition
                             const detectedIntents = await detectIntents(consolidatedText, { pendingAction });
                             const allUserTools = await UniversalToolsRegistry.loadUserTools(userId, db);
@@ -2033,8 +2056,12 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                             });
                             const contactName = conv.contact_name || msg.pushName || 'User';
 
+                            const activeSystemPrompt = (isPersonalMode && toolsConfig?.personal_system_prompt)
+                              ? toolsConfig.personal_system_prompt
+                              : aiSettings.system_prompt;
+
                             const { systemPrompt, userMessage } = buildPromptWithRag(
-                              aiSettings.system_prompt,
+                              activeSystemPrompt,
                               relevantChunks,
                               consolidatedText,
                               {
