@@ -4,6 +4,47 @@ declare(strict_types=1);
 $installedCount = count($installedMap);
 $totalPresets = count($appStorePresets);
 
+// Curated SVG Icons and badge styling for each tool preset
+$toolMeta = [
+    'web_search' => [
+        'icon_bg' => 'bg-sky-50 text-sky-600 border-sky-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6"/></svg>'
+    ],
+    'get_current_time' => [
+        'icon_bg' => 'bg-slate-100 text-slate-700 border-slate-200/90',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>'
+    ],
+    'get_weather' => [
+        'icon_bg' => 'bg-blue-50 text-blue-600 border-blue-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z"/></svg>'
+    ],
+    'draft_email' => [
+        'icon_bg' => 'bg-violet-50 text-violet-600 border-violet-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>'
+    ],
+    'confirm_action' => [
+        'icon_bg' => 'bg-emerald-50 text-emerald-600 border-emerald-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>'
+    ],
+    'update_memory' => [
+        'icon_bg' => 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg>'
+    ],
+    'delete_memory' => [
+        'icon_bg' => 'bg-rose-50 text-rose-600 border-rose-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>'
+    ],
+    'escalate_to_human' => [
+        'icon_bg' => 'bg-amber-50 text-amber-600 border-amber-200/80',
+        'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0M10.5 8.25h3m-3 3h3"/></svg>'
+    ]
+];
+
+$defaultToolMeta = [
+    'icon_bg' => 'bg-slate-100 text-slate-700 border-slate-200/90',
+    'svg' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>'
+];
+
 // Map categories for filter counts
 $catCounts = [
     'all' => $totalPresets,
@@ -30,13 +71,25 @@ foreach ($appStorePresets as $p) {
     }
 }
 
-// Prepare JSON payload for the detail modal
-$presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
+// Category tabs definitions (only display if count > 0)
+$catDefinitions = [
+    'all' => ['label' => 'All Presets', 'count' => $catCounts['all']],
+    'builtin' => ['label' => 'Utilities', 'count' => $catCounts['builtin']],
+    'productivity' => ['label' => 'Productivity & Safety', 'count' => $catCounts['productivity']],
+    'api' => ['label' => 'REST APIs', 'count' => $catCounts['api']],
+    'webhook' => ['label' => 'Webhooks', 'count' => $catCounts['webhook']],
+    'support' => ['label' => 'Support Desk', 'count' => $catCounts['support']]
+];
+
+// Prepare JSON payload for the client-side detail modal
+$presetsJson = json_encode(array_map(function($preset) use ($installedMap, $toolMeta, $defaultToolMeta) {
     $isInst = isset($installedMap[$preset['slug']]);
+    $meta = $toolMeta[$preset['slug']] ?? $defaultToolMeta;
     return [
         'slug' => $preset['slug'],
         'title' => $preset['title'],
-        'icon' => $preset['icon'],
+        'svg_icon' => $meta['svg'],
+        'icon_bg' => $meta['icon_bg'],
         'category' => $preset['category'],
         'category_label' => $preset['category_label'],
         'group' => $preset['group'] ?? '',
@@ -51,17 +104,22 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
 }, $appStorePresets), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
 ?>
 
-<div class="space-y-4 mb-6">
-    <!-- Header: Minimal & Direct -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
+<div class="space-y-4 mb-8">
+    <!-- Header: Minimal & Crisp -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200/80">
         <div>
-            <h1 class="text-xl font-bold text-slate-900 tracking-tight">App Store</h1>
-            <p class="text-xs text-slate-500 mt-0.5">Modular tools and function calling for your WhatsApp AI agent.</p>
+            <div class="flex items-center gap-2">
+                <h1 class="text-xl font-bold text-slate-900 tracking-tight">Tools Store</h1>
+                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200/80">
+                    Function Calling Catalog
+                </span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Autonomous presets and capability modules for your WhatsApp AI agent.</p>
         </div>
         <div class="flex items-center gap-2.5">
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                <span><?= $installedCount ?> of <?= $totalPresets ?> Active</span>
+                <span><?= $installedCount ?> of <?= $totalPresets ?> Installed</span>
             </span>
             <a href="<?= e(base_url('index.php?page=tools')) ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200/90 shadow-2xs transition-all active:scale-[0.98] cursor-pointer">
                 <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>
@@ -70,44 +128,34 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
         </div>
     </div>
 
-    <!-- Toolbar: Search + Category Pills -->
+    <!-- Toolbar: Search Input + Category Filter Pills -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white rounded-xl border border-slate-200/80 p-2.5 shadow-2xs">
         <!-- Search Input -->
         <div class="relative w-full md:w-72">
             <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             </div>
-            <input type="text" id="appSearchInput" placeholder="Search tools..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200/90 rounded-lg text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-700 transition-colors">
+            <input type="text" id="appSearchInput" placeholder="Search by name, slug, or keywords..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200/90 rounded-lg text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-700 transition-colors">
         </div>
 
-        <!-- Category Tabs -->
+        <!-- Category Tabs (Dynamically only rendered if count > 0) -->
         <div class="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0 scrollbar-none" id="categoryTabContainer">
-            <button type="button" onclick="setCategoryFilter('all', this)" class="cat-pill active px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 text-white shadow-2xs transition-all cursor-pointer shrink-0">
-                All <span class="opacity-75 text-[11px]">(<?= $catCounts['all'] ?>)</span>
-            </button>
-            <button type="button" onclick="setCategoryFilter('builtin', this)" class="cat-pill px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all cursor-pointer shrink-0">
-                Utilities <span class="opacity-60 text-[11px]">(<?= $catCounts['builtin'] ?>)</span>
-            </button>
-            <button type="button" onclick="setCategoryFilter('productivity', this)" class="cat-pill px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all cursor-pointer shrink-0">
-                Productivity <span class="opacity-60 text-[11px]">(<?= $catCounts['productivity'] ?>)</span>
-            </button>
-            <button type="button" onclick="setCategoryFilter('api', this)" class="cat-pill px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all cursor-pointer shrink-0">
-                REST APIs <span class="opacity-60 text-[11px]">(<?= $catCounts['api'] ?>)</span>
-            </button>
-            <button type="button" onclick="setCategoryFilter('webhook', this)" class="cat-pill px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all cursor-pointer shrink-0">
-                Webhooks <span class="opacity-60 text-[11px]">(<?= $catCounts['webhook'] ?>)</span>
-            </button>
-            <button type="button" onclick="setCategoryFilter('support', this)" class="cat-pill px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all cursor-pointer shrink-0">
-                Support <span class="opacity-60 text-[11px]">(<?= $catCounts['support'] ?>)</span>
-            </button>
+            <?php foreach ($catDefinitions as $catKey => $catInfo): ?>
+                <?php if ($catInfo['count'] > 0): ?>
+                    <button type="button" onclick="setCategoryFilter('<?= e($catKey) ?>', this)" class="cat-pill <?= $catKey === 'all' ? 'active bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900' ?> px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0">
+                        <?= e($catInfo['label']) ?> <span class="opacity-75 text-[11px] font-mono ml-0.5">(<?= $catInfo['count'] ?>)</span>
+                    </button>
+                <?php endif; ?>
+            <?php endforeach; ?>
         </div>
     </div>
 
-    <!-- Compact Cards Grid (6 per page) -->
+    <!-- Cards Grid (6 per page) -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5" id="presetsCardsGrid">
         <?php foreach ($appStorePresets as $preset): 
             $isInstalled = isset($installedMap[$preset['slug']]);
             $paramsCount = count($preset['parameters'] ?? []);
+            $meta = $toolMeta[$preset['slug']] ?? $defaultToolMeta;
             
             // Map category for filter
             $filterGroup = 'builtin';
@@ -115,7 +163,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
                 $filterGroup = 'api';
             } elseif ($preset['category'] === 'webhook') {
                 $filterGroup = 'webhook';
-            } elseif (in_array($preset['slug'], ['draft_email', 'confirm_action', 'update_memory'], true)) {
+            } elseif (in_array($preset['slug'], ['draft_email', 'confirm_action', 'update_memory', 'delete_memory'], true)) {
                 $filterGroup = 'productivity';
             } elseif ($preset['slug'] === 'escalate_to_human') {
                 $filterGroup = 'support';
@@ -131,11 +179,11 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
                  data-installed="<?= $isInstalled ? '1' : '0' ?>"
                  onclick="openAppModal('<?= e($preset['slug']) ?>')">
                 <div>
-                    <!-- Top Row: Icon + Title + Status -->
-                    <div class="flex items-start justify-between gap-2.5 mb-2">
+                    <!-- Top Row: Vector SVG Icon + Title + Status -->
+                    <div class="flex items-start justify-between gap-2.5 mb-2.5">
                         <div class="flex items-center gap-2.5 min-w-0">
-                            <span class="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform select-none">
-                                <?= e($preset['icon']) ?>
+                            <span class="w-9 h-9 rounded-lg <?= e($meta['icon_bg']) ?> border flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform select-none">
+                                <?= $meta['svg'] ?>
                             </span>
                             <div class="min-w-0">
                                 <h2 class="text-xs sm:text-[13px] font-bold text-slate-900 group-hover:text-slate-800 truncate leading-tight">
@@ -148,7 +196,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
                         </div>
 
                         <?php if ($isInstalled): ?>
-                            <span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                            <span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center gap-1">
                                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                 Installed
                             </span>
@@ -159,7 +207,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
                         <?php endif; ?>
                     </div>
 
-                    <!-- Short Summary (1-2 lines only) -->
+                    <!-- Short Summary (Crisp & readable) -->
                     <p class="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-3">
                         <?= e($shortDesc) ?>
                     </p>
@@ -167,14 +215,16 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
 
                 <!-- Bottom Row: Spec badge + Direct Action -->
                 <div class="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
-                    <span class="text-[11px] font-mono text-slate-500">
+                    <span class="text-[11px] font-mono text-slate-500 flex items-center gap-1">
+                        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
                         <?= $paramsCount > 0 ? $paramsCount . ' param' . ($paramsCount > 1 ? 's' : '') : 'Direct call' ?>
                     </span>
 
                     <div class="flex items-center gap-1.5">
                         <?php if ($isInstalled): ?>
-                            <span class="text-[11px] font-semibold text-slate-500 group-hover:text-slate-900 transition-colors flex items-center gap-0.5">
-                                Details ➔
+                            <span class="text-[11px] font-semibold text-slate-500 group-hover:text-slate-900 transition-colors flex items-center gap-1">
+                                View Specs
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                             </span>
                         <?php else: ?>
                             <form method="post" action="<?= e(base_url('index.php?page=app-store-install')) ?>" onclick="event.stopPropagation();" class="inline">
@@ -220,7 +270,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
     </div>
 </div>
 
-<!-- Slide-over / Centered Detail Modal -->
+<!-- Modal Dialog -->
 <div id="appModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <!-- Backdrop with blur -->
     <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity" onclick="closeAppModal()"></div>
@@ -230,7 +280,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
             <!-- Modal Header -->
             <div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
                 <div class="flex items-center gap-3">
-                    <span id="modalIcon" class="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center text-2xl shrink-0 select-none"></span>
+                    <span id="modalIconContainer" class="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 select-none"></span>
                     <div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <h2 id="modalTitle" class="text-sm sm:text-base font-bold text-slate-900"></h2>
@@ -239,12 +289,12 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
                         <p class="text-xs font-mono text-slate-500 mt-0.5">slug: <strong id="modalSlug" class="text-slate-800"></strong></p>
                     </div>
                 </div>
-                <button type="button" onclick="closeAppModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer" aria-label="Close dialog">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                <button type="button" onclick="closeAppModal()" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer" aria-label="Close dialog">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
             </div>
 
-            <!-- Modal Content (Scrollable if needed) -->
+            <!-- Modal Content (Scrollable) -->
             <div class="py-4 space-y-4 max-h-[60vh] overflow-y-auto pr-1">
                 <!-- Status & Target Mode -->
                 <div class="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
@@ -290,7 +340,7 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
     </div>
 </div>
 
-<!-- Raw Presets Metadata for Client-Side Modal & Pagination -->
+<!-- Presets Metadata for Client-Side Modal & Pagination -->
 <script type="application/json" id="presetsJsonData">
 <?= $presetsJson ?>
 </script>
@@ -422,7 +472,11 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
         const preset = presetsMap[slug];
         if (!preset) return;
 
-        document.getElementById('modalIcon').textContent = preset.icon || '📦';
+        // Populate SVG icon
+        const iconContainer = document.getElementById('modalIconContainer');
+        iconContainer.className = 'w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 select-none ' + (preset.icon_bg || 'bg-slate-100 text-slate-700 border-slate-200/90');
+        iconContainer.innerHTML = preset.svg_icon || '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>';
+
         document.getElementById('modalTitle').textContent = preset.title;
         document.getElementById('modalCategoryBadge').textContent = preset.category_label || preset.category;
         document.getElementById('modalSlug').textContent = preset.slug;
@@ -444,8 +498,8 @@ $presetsJson = json_encode(array_map(function($preset) use ($installedMap) {
         // Status badge
         const statusBadge = document.getElementById('modalStatusBadge');
         if (preset.is_installed) {
-            statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200';
-            statusBadge.textContent = 'Installed & Active';
+            statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/80 inline-flex items-center gap-1';
+            statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Installed';
         } else {
             statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200/60';
             statusBadge.textContent = 'Available to Install';
