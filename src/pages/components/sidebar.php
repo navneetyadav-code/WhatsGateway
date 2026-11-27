@@ -7,16 +7,28 @@ $userForSidebar = $user ?? current_user();
 $userId = (int) ($userForSidebar['id'] ?? 0);
 
 $agentMode = 'support';
+$workspaceMode = (string) ($userForSidebar['workspace_mode'] ?? '');
 if ($userId > 0) {
     try {
         $pdo = Database::pdo();
+        if ($workspaceMode === '') {
+            $stmt = $pdo->prepare('SELECT workspace_mode FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$userId]);
+            $workspaceMode = (string) ($stmt->fetchColumn() ?: '');
+        }
         $stmt = $pdo->prepare('SELECT agent_mode FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
         $stmt->execute([$userId]);
         $agentMode = (string) ($stmt->fetchColumn() ?: 'support');
     } catch (\Throwable $e) {}
 }
 
-$isPersonalMode = ($agentMode === 'personal');
+if (!in_array($workspaceMode, ['personal', 'support', 'api_only'], true)) {
+    $workspaceMode = ($agentMode === 'personal') ? 'personal' : 'support';
+}
+
+$isPersonalMode = ($workspaceMode === 'personal');
+$isApiOnly = ($workspaceMode === 'api_only');
+$isSupportMode = ($workspaceMode === 'support');
 
 if (!isset($initials)) {
     $nameParts = preg_split('/\s+/', trim((string) ($userForSidebar['name'] ?? 'Admin'))) ?: [];
@@ -33,177 +45,220 @@ $isActive = static function (array $pages) use ($currentPage): bool {
 |--------------------------------------------------------------------------
 */
 
-$navigation = [
-    'workspace' => [
-        'title' => 'Workspace',
-        'type' => 'direct',
-        'items' => [
-            [
-                'label' => 'Overview',
-                'page' => 'dashboard',
-                'pages' => ['dashboard'],
-                'icon' => 'dashboard',
-            ],
-            [
-                'label' => 'New Message',
-                'page' => 'message',
-                'pages' => ['message'],
-                'icon' => 'edit',
-            ],
-            [
-                'label' => 'WhatsApp Groups',
-                'page' => 'groups',
-                'pages' => ['groups'],
-                'icon' => 'user-group',
-            ],
-            [
-                'label' => 'Connect WhatsApp',
-                'page' => 'device',
-                'pages' => ['device'],
-                'icon' => 'phone',
-            ],
-            [
-                'label' => 'API Keys',
-                'page' => 'api-keys',
-                'pages' => ['api-keys'],
-                'icon' => 'key',
-            ],
-            [
-                'label' => 'Contacts',
-                'page' => 'contacts',
-                'pages' => ['contacts'],
-                'icon' => 'users',
-            ],
-        ],
+$workspaceDirectItems = [
+    [
+        'label' => 'Overview',
+        'page' => 'dashboard',
+        'pages' => ['dashboard'],
+        'icon' => 'dashboard',
     ],
-    'engagement' => [
-        'title' => 'Customer Engagement',
-        'type' => 'group',
-        'icon' => 'chat',
-        'items' => [
-            [
-                'label' => 'Live Chat',
-                'page' => 'live-chat',
-                'pages' => ['live-chat'],
-                'icon' => 'chat',
-                'mode' => 'support',
-            ],
-            [
-                'label' => 'Campaigns',
-                'page' => 'campaigns',
-                'pages' => ['campaigns'],
-                'icon' => 'megaphone',
-            ],
-            [
-                'label' => 'Message Queue',
-                'page' => 'queue',
-                'pages' => ['queue'],
-                'icon' => 'queue',
-            ],
-            [
-                'label' => 'Customer Feedback',
-                'page' => 'feedback',
-                'pages' => ['feedback'],
-                'icon' => 'star',
-                'mode' => 'support',
-            ],
-            [
-                'label' => 'Escalations',
-                'page' => 'escalations',
-                'pages' => ['escalations'],
-                'icon' => 'alert',
-                'mode' => 'support',
-            ],
-        ],
+    [
+        'label' => 'Connect WhatsApp',
+        'page' => 'device',
+        'pages' => ['device'],
+        'icon' => 'phone',
     ],
-    'ai' => [
-        'title' => 'AI & Automation',
-        'type' => 'group',
-        'icon' => 'ai',
-        'items' => [
-            [
-                'label' => $isPersonalMode ? 'Personal Assistant' : 'Customer Support Bot',
-                'page' => $isPersonalMode ? 'personal-assistant' : 'support-bot',
-                'pages' => ['chatbot', 'ai-agent', 'support-bot', 'personal-assistant'],
-                'icon' => 'bot',
-            ],
-            [
-                'label' => 'AI Providers & SMTP',
-                'page' => 'ai-credentials',
-                'pages' => ['ai-credentials', 'ai-keys'],
-                'icon' => 'plug',
-            ],
-            [
-                'label' => 'Memory & Training',
-                'page' => 'memory',
-                'pages' => ['memory', 'training'],
-                'icon' => 'memory',
-            ],
-            [
-                'label' => 'Knowledge Base',
-                'page' => 'knowledge',
-                'pages' => ['knowledge'],
-                'icon' => 'book',
-                'mode' => 'support',
-            ],
-            [
-                'label' => 'Automation Rules',
-                'page' => 'rules',
-                'pages' => ['rules', 'keyword-rules'],
-                'icon' => 'workflow',
-            ],
-            [
-                'label' => 'Custom Tools',
-                'page' => 'tools',
-                'pages' => ['tools'],
-                'icon' => 'tools',
-            ],
-            [
-                'label' => 'App Store & Presets',
-                'page' => 'app-store',
-                'pages' => ['app-store', 'presets'],
-                'icon' => 'store',
-            ],
-        ],
+    [
+        'label' => 'New Message',
+        'page' => 'message',
+        'pages' => ['message'],
+        'icon' => 'edit',
     ],
-    'integrations' => [
-        'title' => 'Channels & Integrations',
-        'type' => 'group',
-        'icon' => 'integrations',
-        'items' => [
-            [
-                'label' => 'Webhooks',
-                'page' => 'webhooks',
-                'pages' => ['webhooks'],
-                'icon' => 'webhook',
-            ],
-        ],
+    [
+        'label' => 'API Keys',
+        'page' => 'api-keys',
+        'pages' => ['api-keys'],
+        'icon' => 'key',
     ],
-    'administration' => [
-        'title' => 'Administration',
-        'type' => 'direct',
-        'items' => [
-            [
-                'label' => 'Settings',
-                'page' => 'settings',
-                'pages' => ['settings', 'security'],
-                'icon' => 'settings',
-            ],
-            [
-                'label' => 'Audit Logs',
-                'page' => 'audit',
-                'pages' => ['audit'],
-                'icon' => 'audit',
-            ],
+];
+
+$whatsappCategory = [
+    'title' => 'WhatsApp',
+    'type' => 'group',
+    'icon' => 'whatsapp',
+    'items' => [
+        [
+            'label' => 'WhatsApp Groups',
+            'page' => 'groups',
+            'pages' => ['groups'],
+            'icon' => 'user-group',
+        ],
+        [
+            'label' => 'Contacts',
+            'page' => 'contacts',
+            'pages' => ['contacts'],
+            'icon' => 'users',
+        ],
+        [
+            'label' => 'Message Queue',
+            'page' => 'queue',
+            'pages' => ['queue'],
+            'icon' => 'queue',
+        ],
+        [
+            'label' => 'Webhooks',
+            'page' => 'webhooks',
+            'pages' => ['webhooks'],
+            'icon' => 'webhook',
         ],
     ],
 ];
 
-/*
-|--------------------------------------------------------------------------
-| Filter navigation by agent mode & calculate active category state
-|--------------------------------------------------------------------------
-*/
+$adminCategory = [
+    'title' => 'Administration',
+    'type' => 'direct',
+    'items' => [
+        [
+            'label' => 'Settings',
+            'page' => 'settings',
+            'pages' => ['settings', 'security'],
+            'icon' => 'settings',
+        ],
+        [
+            'label' => 'Audit Logs',
+            'page' => 'audit',
+            'pages' => ['audit'],
+            'icon' => 'audit',
+        ],
+    ],
+];
+
+if ($isPersonalMode) {
+    $navigation = [
+        'workspace' => [
+            'title' => 'Workspace',
+            'type' => 'direct',
+            'items' => $workspaceDirectItems,
+        ],
+        'whatsapp' => $whatsappCategory,
+        'personal_assistant' => [
+            'title' => 'Personal Assistant',
+            'type' => 'group',
+            'icon' => 'bot',
+            'items' => [
+                [
+                    'label' => 'Personal Assistant',
+                    'page' => 'personal-assistant',
+                    'pages' => ['chatbot', 'ai-agent', 'support-bot', 'personal-assistant'],
+                    'icon' => 'bot',
+                ],
+                [
+                    'label' => 'AI Providers & SMTP',
+                    'page' => 'ai-credentials',
+                    'pages' => ['ai-credentials', 'ai-keys'],
+                    'icon' => 'plug',
+                ],
+                [
+                    'label' => 'Custom Tools',
+                    'page' => 'tools',
+                    'pages' => ['tools'],
+                    'icon' => 'tools',
+                ],
+                [
+                    'label' => 'Tools Store',
+                    'page' => 'app-store',
+                    'pages' => ['app-store', 'presets'],
+                    'icon' => 'store',
+                ],
+                [
+                    'label' => 'Memory & Training',
+                    'page' => 'memory',
+                    'pages' => ['memory', 'training'],
+                    'icon' => 'memory',
+                ],
+            ],
+        ],
+        'administration' => $adminCategory,
+    ];
+} elseif ($isSupportMode) {
+    $navigation = [
+        'workspace' => [
+            'title' => 'Workspace',
+            'type' => 'direct',
+            'items' => $workspaceDirectItems,
+        ],
+        'whatsapp' => $whatsappCategory,
+        'customer_support' => [
+            'title' => 'Customer Support',
+            'type' => 'group',
+            'icon' => 'headset',
+            'items' => [
+                [
+                    'label' => 'Live Chat',
+                    'page' => 'live-chat',
+                    'pages' => ['live-chat'],
+                    'icon' => 'chat',
+                ],
+                [
+                    'label' => 'Customer Support Bot',
+                    'page' => 'support-bot',
+                    'pages' => ['chatbot', 'ai-agent', 'support-bot'],
+                    'icon' => 'bot',
+                ],
+                [
+                    'label' => 'Company Knowledge Base',
+                    'page' => 'knowledge',
+                    'pages' => ['knowledge'],
+                    'icon' => 'book',
+                ],
+                [
+                    'label' => 'Escalations & Alarms',
+                    'page' => 'escalations',
+                    'pages' => ['escalations'],
+                    'icon' => 'alert',
+                ],
+                [
+                    'label' => 'Customer Feedback',
+                    'page' => 'feedback',
+                    'pages' => ['feedback'],
+                    'icon' => 'star',
+                ],
+                [
+                    'label' => 'AI Providers & SMTP',
+                    'page' => 'ai-credentials',
+                    'pages' => ['ai-credentials', 'ai-keys'],
+                    'icon' => 'plug',
+                ],
+                [
+                    'label' => 'Custom Tools',
+                    'page' => 'tools',
+                    'pages' => ['tools'],
+                    'icon' => 'tools',
+                ],
+                [
+                    'label' => 'Tools Store',
+                    'page' => 'app-store',
+                    'pages' => ['app-store', 'presets'],
+                    'icon' => 'store',
+                ],
+                [
+                    'label' => 'Memory & Training',
+                    'page' => 'memory',
+                    'pages' => ['memory', 'training'],
+                    'icon' => 'memory',
+                ],
+                [
+                    'label' => 'Campaigns',
+                    'page' => 'campaigns',
+                    'pages' => ['campaigns'],
+                    'icon' => 'megaphone',
+                ],
+            ],
+        ],
+        'administration' => $adminCategory,
+    ];
+} else {
+    // API & Webhooks Only
+    $navigation = [
+        'workspace' => [
+            'title' => 'Workspace',
+            'type' => 'direct',
+            'items' => $workspaceDirectItems,
+        ],
+        'whatsapp' => $whatsappCategory,
+        'administration' => $adminCategory,
+    ];
+}
 
 foreach ($navigation as $key => &$category) {
     $category['items'] = array_values(
@@ -255,6 +310,10 @@ $iconPaths = [
         '<rect x="6" y="2" width="12" height="20" rx="2"/>
          <path d="M11 18h2"/>',
 
+    'whatsapp' =>
+        '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+         <path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2z"/>',
+
     'key' =>
         '<circle cx="8" cy="15" r="5"/>
          <path d="m21 2-9.6 9.6M15.5 7.5l3 3L21 8l-3-3"/>',
@@ -267,6 +326,10 @@ $iconPaths = [
 
     'chat' =>
         '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+
+    'headset' =>
+        '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+         <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
 
     'megaphone' =>
         '<path d="m3 11 18-5v12L3 14v-3z"/>
@@ -517,7 +580,7 @@ $renderItem = static function (array $item, string $type = 'normal') use ($isAct
                     <?= e($userForSidebar['name'] ?? 'Admin') ?>
                 </p>
                 <p class="text-[10px] text-slate-400 truncate font-mono mt-0.5">
-                    <?= $isPersonalMode ? 'Personal workspace' : 'Workspace owner' ?>
+                    <?= $isApiOnly ? 'REST API & Webhooks' : ($isPersonalMode ? 'Personal Assistant' : 'Customer Support') ?>
                 </p>
             </div>
             <form method="post" action="<?= e(base_url('index.php?page=logout')) ?>" title="Sign out" class="sidebar-user-logout shrink-0">

@@ -6,16 +6,23 @@ $seo = seo_meta($currentPage);
 $isPublicDocs = !$isAuthed && $currentPage === 'docs';
 $initials = 'AD';
 $agentMode = 'support';
+$workspaceMode = 'support';
 if ($userForLayout) {
     $parts = preg_split('/\s+/', trim((string) $userForLayout['name'])) ?: [];
     $initials = strtoupper(substr($parts[0] ?? 'A', 0, 1) . substr($parts[1] ?? 'D', 0, 1));
+    $workspaceMode = (string) ($userForLayout['workspace_mode'] ?? '');
     try {
         $modeStmt = Database::pdo()->prepare('SELECT agent_mode FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
         $modeStmt->execute([(int) $userForLayout['id']]);
         $agentMode = (string) ($modeStmt->fetchColumn() ?: 'support');
     } catch (\Throwable $e) {}
+    if ($workspaceMode === '') {
+        $workspaceMode = ($agentMode === 'personal') ? 'personal' : 'support';
+    }
 }
-$isPersonalMode = ($agentMode === 'personal');
+$isPersonalMode = ($workspaceMode === 'personal');
+$isApiOnly = ($workspaceMode === 'api_only');
+$isSupportMode = ($workspaceMode === 'support');
 ?>
 <!doctype html>
 <html lang="en">
@@ -530,8 +537,8 @@ $isPersonalMode = ($agentMode === 'personal');
     <main class="flex-1 flex flex-col h-full md:h-screen min-w-0 bg-[#FBFBFC] relative overflow-hidden">
         <?php require __DIR__ . '/components/navbar.php'; ?>
 
-        <!-- Global Floating Emergency Escalation Banner (Hidden in Personal Assistant Mode) -->
-        <?php if (!$isPersonalMode): ?>
+        <!-- Global Floating Emergency Escalation Banner (Only shown in Customer Support Mode) -->
+        <?php if (!$isPersonalMode && !$isApiOnly): ?>
         <div id="globalEscalationBanner" class="hidden mx-4 sm:mx-6 mt-3 bg-gradient-to-r from-rose-600 via-rose-700 to-red-800 text-white rounded-xl p-3 px-4 shadow-xl border border-rose-500/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200 z-30 shrink-0">
             <div class="flex items-center gap-3 min-w-0">
                 <span class="w-8 h-8 rounded-lg bg-white/20 backdrop-blur-xs flex items-center justify-center text-base shrink-0 animate-bounce">

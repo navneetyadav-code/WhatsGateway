@@ -135,6 +135,9 @@ if (isset($_GET['code'])) {
         }
 
         $_SESSION['user_id'] = (int) $user['id'];
+        if ((int) ($user['onboarding_completed'] ?? 1) === 0) {
+            redirect_to('index.php?page=onboarding');
+        }
         redirect_to('index.php?page=dashboard');
     } else {
         if (!app_config('app.enable_registration')) {
@@ -156,7 +159,7 @@ if (isset($_GET['code'])) {
             }
 
             flash('success', 'Account created successfully via Google.');
-            redirect_to('index.php?page=dashboard');
+            redirect_to('index.php?page=onboarding');
         } catch (Throwable $e) {
             flash('error', 'Failed to create account. Email might already be registered.');
             redirect_to('index.php?page=login');

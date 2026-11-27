@@ -595,14 +595,19 @@ if ($page === 'ai-agent-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $isAlwaysOn = isset($_POST['is_always_on']) ? 1 : 0;
     $ownerName = trim((string) ($_POST['owner_name'] ?? 'Boss')) ?: 'Boss';
 
-    $providerPriority = in_array($_POST['provider_priority'] ?? '', ['gemini', 'groq', 'openrouter'], true) ? $_POST['provider_priority'] : 'gemini';
+    $rawPriority = (string) ($_POST['provider_priority'] ?? '');
+    $providerPriority = in_array($rawPriority, ['gemini', 'groq', 'custom', 'openrouter'], true) ? $rawPriority : 'gemini';
+    if ($providerPriority === 'openrouter') {
+        $providerPriority = 'custom';
+    }
     $systemPrompt = trim((string) ($_POST['system_prompt'] ?? ''));
     $temperature = max(0.0, min(1.0, (float) ($_POST['temperature'] ?? 0.4)));
     $maxTokens = max(50, min(2000, (int) ($_POST['max_tokens'] ?? 500)));
 
     $geminiKey = trim((string) ($_POST['gemini_api_key'] ?? ''));
     $groqKey = trim((string) ($_POST['groq_api_key'] ?? ''));
-    $openrouterKey = trim((string) ($_POST['openrouter_api_key'] ?? ''));
+    $customKey = trim((string) ($_POST['custom_api_key'] ?? ($_POST['openrouter_api_key'] ?? '')));
+    $customEndpoint = trim((string) ($_POST['custom_endpoint'] ?? ''));
 
     // Safe Key Masking: Never overwrite saved production keys with UI mask asterisks
     if ($geminiKey === '********' || preg_match('/^\*+$/', $geminiKey)) {
@@ -611,34 +616,38 @@ if ($page === 'ai-agent-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($groqKey === '********' || preg_match('/^\*+$/', $groqKey)) {
         $groqKey = '';
     }
-    if ($openrouterKey === '********' || preg_match('/^\*+$/', $openrouterKey)) {
-        $openrouterKey = '';
+    if ($customKey === '********' || preg_match('/^\*+$/', $customKey)) {
+        $customKey = '';
     }
 
     $geminiModel = preg_replace('/^models\//', '', trim((string) ($_POST['gemini_model'] ?? '')));
     $groqModel = trim((string) ($_POST['groq_model'] ?? ''));
-    $openrouterModel = trim((string) ($_POST['openrouter_model'] ?? ''));
+    $customModel = trim((string) ($_POST['custom_model'] ?? ($_POST['openrouter_model'] ?? '')));
 
     // Preserve existing models if blank
-    $currSettingsStmt = $pdo->prepare('SELECT gemini_model, groq_model, openrouter_model FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
+    $currSettingsStmt = $pdo->prepare('SELECT gemini_model, groq_model, custom_model, custom_endpoint, openrouter_model FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
     $currSettingsStmt->execute([$userId]);
     $currRow = $currSettingsStmt->fetch() ?: [];
 
     $saveGeminiModel = $geminiModel !== '' ? $geminiModel : ($currRow['gemini_model'] ?? 'gemini-3.5-flash');
     $saveGroqModel = $groqModel !== '' ? $groqModel : ($currRow['groq_model'] ?? 'openai/gpt-oss-120b');
-    $saveOpenrouterModel = $openrouterModel !== '' ? $openrouterModel : ($currRow['openrouter_model'] ?? 'meta-llama/llama-3.3-70b-instruct:free');
+    $saveCustomModel = $customModel !== '' ? $customModel : ($currRow['custom_model'] ?? ($currRow['openrouter_model'] ?? 'gpt-4o'));
+    $saveCustomEndpoint = $customEndpoint !== '' ? $customEndpoint : ($currRow['custom_endpoint'] ?? 'https://api.openai.com/v1');
 
     $stmt = $pdo->prepare(
-        'INSERT INTO ai_agent_settings (user_id, enabled, provider_priority, gemini_api_key, groq_api_key, openrouter_api_key, gemini_model, groq_model, openrouter_model, system_prompt, temperature, max_tokens, auto_reply_enabled, agent_mode, feedback_enabled, is_always_on, owner_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        'INSERT INTO ai_agent_settings (user_id, enabled, provider_priority, gemini_api_key, groq_api_key, custom_api_key, openrouter_api_key, gemini_model, groq_model, custom_model, custom_endpoint, openrouter_model, system_prompt, temperature, max_tokens, auto_reply_enabled, agent_mode, feedback_enabled, is_always_on, owner_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            enabled = VALUES(enabled),
            provider_priority = VALUES(provider_priority),
            gemini_api_key = IF(CHAR_LENGTH(VALUES(gemini_api_key)) > 0, VALUES(gemini_api_key), gemini_api_key),
            groq_api_key = IF(CHAR_LENGTH(VALUES(groq_api_key)) > 0, VALUES(groq_api_key), groq_api_key),
+           custom_api_key = IF(CHAR_LENGTH(VALUES(custom_api_key)) > 0, VALUES(custom_api_key), custom_api_key),
            openrouter_api_key = IF(CHAR_LENGTH(VALUES(openrouter_api_key)) > 0, VALUES(openrouter_api_key), openrouter_api_key),
            gemini_model = IF(CHAR_LENGTH(VALUES(gemini_model)) > 0, VALUES(gemini_model), gemini_model),
            groq_model = IF(CHAR_LENGTH(VALUES(groq_model)) > 0, VALUES(groq_model), groq_model),
+           custom_model = IF(CHAR_LENGTH(VALUES(custom_model)) > 0, VALUES(custom_model), custom_model),
+           custom_endpoint = IF(CHAR_LENGTH(VALUES(custom_endpoint)) > 0, VALUES(custom_endpoint), custom_endpoint),
            openrouter_model = IF(CHAR_LENGTH(VALUES(openrouter_model)) > 0, VALUES(openrouter_model), openrouter_model),
            system_prompt = VALUES(system_prompt),
            temperature = VALUES(temperature),
@@ -650,8 +659,8 @@ if ($page === 'ai-agent-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
            owner_name = VALUES(owner_name)'
     );
     $stmt->execute([
-        $userId, $enabled, $providerPriority, $geminiKey, $groqKey, $openrouterKey,
-        $saveGeminiModel, $saveGroqModel, $saveOpenrouterModel, $systemPrompt, $temperature, $maxTokens, $autoReplyEnabled,
+        $userId, $enabled, $providerPriority, $geminiKey, $groqKey, $customKey, $customKey,
+        $saveGeminiModel, $saveGroqModel, $saveCustomModel, $saveCustomEndpoint, $saveCustomModel, $systemPrompt, $temperature, $maxTokens, $autoReplyEnabled,
         $agentMode, $feedbackEnabled, $isAlwaysOn, $ownerName
     ]);
 
@@ -1418,6 +1427,137 @@ if ($page === 'settings-storage-driver' && $_SERVER['REQUEST_METHOD'] === 'POST'
     redirect_to('index.php?page=settings');
 }
 
+if ($page === 'settings-workspace-mode' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = require_auth();
+    verify_csrf();
+    $userId = (int) $user['id'];
+    $rawMode = trim((string) ($_POST['workspace_mode'] ?? 'support'));
+    if (!in_array($rawMode, ['personal', 'support', 'api_only'], true)) {
+        $rawMode = 'support';
+    }
+
+    $pdo = Database::pdo();
+    $pdo->prepare('UPDATE users SET workspace_mode = ? WHERE id = ?')->execute([$rawMode, $userId]);
+
+    $agentMode = $rawMode === 'personal' ? 'personal' : 'support';
+    $aiEnabled = $rawMode === 'api_only' ? 0 : 1;
+    $autoReplyEnabled = $rawMode === 'api_only' ? 0 : 1;
+
+    $ownerName = trim((string) ($user['name'] ?? 'Boss')) ?: 'Boss';
+    $pdo->prepare(
+        'INSERT INTO ai_agent_settings (user_id, enabled, auto_reply_enabled, provider_priority, agent_mode, owner_name)
+         VALUES (?, ?, ?, "gemini", ?, ?)
+         ON DUPLICATE KEY UPDATE
+           enabled = VALUES(enabled),
+           auto_reply_enabled = VALUES(auto_reply_enabled),
+           agent_mode = VALUES(agent_mode)'
+    )->execute([$userId, $aiEnabled, $autoReplyEnabled, $agentMode, $ownerName]);
+
+    $modeLabels = [
+        'api_only' => 'REST API & Webhooks Only',
+        'personal' => 'Personal AI Assistant',
+        'support' => 'Customer Support Agent',
+    ];
+    flash('success', "Workspace mode switched to {$modeLabels[$rawMode]}.");
+    redirect_to('index.php?page=settings');
+}
+
+if ($page === 'onboarding-save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = require_auth();
+    verify_csrf();
+    $userId = (int) $user['id'];
+    $pdo = Database::pdo();
+
+    $rawMode = trim((string) ($_POST['workspace_mode'] ?? 'support'));
+    if (!in_array($rawMode, ['personal', 'support', 'api_only'], true)) {
+        $rawMode = 'support';
+    }
+
+    if (isset($_POST['skip']) && (string) $_POST['skip'] === '1') {
+        $pdo->prepare('UPDATE users SET onboarding_completed = 1, workspace_mode = ? WHERE id = ?')->execute([$rawMode, $userId]);
+        $dest = ($rawMode === 'api_only') ? 'api-keys' : 'device';
+        redirect_to("index.php?page={$dest}");
+    }
+
+    $agentMode = $rawMode === 'personal' ? 'personal' : 'support';
+    $aiEnabled = $rawMode === 'api_only' ? 0 : 1;
+    $autoReplyEnabled = $rawMode === 'api_only' ? 0 : 1;
+
+    $ownerName = trim((string) ($_POST['owner_name'] ?? ''));
+    if ($ownerName === '') {
+        $ownerName = trim((string) ($user['name'] ?? 'Boss')) ?: 'Boss';
+    }
+    $ownerName = substr($ownerName, 0, 100);
+
+    $rawDriver = trim((string) ($_POST['storage_driver'] ?? 'database_encrypted'));
+    $storageDriver = ($rawDriver === 'persistent_disk') ? 'persistent_disk' : 'database_encrypted';
+
+    $rawAiProvider = trim((string) ($_POST['ai_provider'] ?? 'gemini'));
+    $aiProvider = in_array($rawAiProvider, ['gemini', 'groq', 'custom', 'openrouter'], true) ? $rawAiProvider : 'gemini';
+    if ($aiProvider === 'openrouter') {
+        $aiProvider = 'custom';
+    }
+    $aiApiKey = trim((string) ($_POST['ai_api_key'] ?? ''));
+    $aiEndpoint = trim((string) ($_POST['ai_endpoint'] ?? ''));
+    if ($aiEndpoint === '' && $aiProvider === 'custom') {
+        $aiEndpoint = 'https://api.openai.com/v1';
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare(
+            'INSERT INTO ai_agent_settings (user_id, enabled, auto_reply_enabled, provider_priority, agent_mode, owner_name, custom_endpoint)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               enabled = VALUES(enabled),
+               auto_reply_enabled = VALUES(auto_reply_enabled),
+               provider_priority = VALUES(provider_priority),
+               agent_mode = VALUES(agent_mode),
+               owner_name = VALUES(owner_name),
+               custom_endpoint = IF(CHAR_LENGTH(VALUES(custom_endpoint)) > 0, VALUES(custom_endpoint), custom_endpoint)'
+        )->execute([$userId, $aiEnabled, $autoReplyEnabled, $aiProvider, $agentMode, $ownerName, $aiEndpoint]);
+
+        $pdo->prepare('UPDATE whatsapp_sessions SET storage_driver = ?, updated_at = NOW() WHERE user_id = ?')
+            ->execute([$storageDriver, $userId]);
+
+        if ($aiApiKey !== '' && $rawMode !== 'api_only') {
+            $encryptedKey = encrypt_credential($aiApiKey);
+            $label = ($aiProvider === 'custom' ? 'Custom API' : ucfirst($aiProvider)) . ' Key';
+            $pdo->prepare(
+                'INSERT INTO ai_provider_keys (user_id, provider, label, api_key, model, endpoint, priority, is_active, status)
+                 VALUES (?, ?, ?, ?, NULL, ?, 1, 1, "active")'
+            )->execute([$userId, $aiProvider, $label, $encryptedKey, $aiEndpoint ?: null]);
+
+            $colMap = [
+                'gemini' => 'gemini_api_key',
+                'groq' => 'groq_api_key',
+                'custom' => 'custom_api_key',
+                'openrouter' => 'openrouter_api_key',
+            ];
+            $col = $colMap[$aiProvider];
+            $pdo->prepare("UPDATE ai_agent_settings SET {$col} = ? WHERE user_id = ?")
+                ->execute([$encryptedKey, $userId]);
+        }
+
+        $pdo->prepare('UPDATE users SET onboarding_completed = 1, workspace_mode = ? WHERE id = ?')->execute([$rawMode, $userId]);
+        $pdo->commit();
+    } catch (\Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        flash('error', 'Failed to save workspace setup. Please try again.');
+        redirect_to('index.php?page=onboarding');
+    }
+
+    if ($rawMode === 'api_only') {
+        flash('success', 'REST API & Webhooks gateway configured. Generate or manage your API keys below.');
+        redirect_to('index.php?page=api-keys');
+    } else {
+        flash('success', 'Workspace configured. Connect your WhatsApp number to get started.');
+        redirect_to('index.php?page=device');
+    }
+}
+
 if (($page === 'settings-security' || $page === 'security' || ($page === 'settings' && isset($_POST['action']))) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $user = require_auth();
     verify_csrf();
@@ -1671,8 +1811,17 @@ if ($page === 'security') {
     redirect_to('index.php?page=settings' . $qs);
 }
 
+if ($page === 'onboarding') {
+    $user = require_auth();
+    require dirname(__DIR__) . '/src/pages/onboarding.php';
+    exit;
+}
+
 if (!in_array($page, $publicPages, true)) {
     $user = require_auth();
+    if ((int) ($user['onboarding_completed'] ?? 1) === 0 && in_array($page, $dashboardPages, true)) {
+        redirect_to('index.php?page=onboarding');
+    }
 }
 
 $view = match (true) {

@@ -9,7 +9,10 @@
     <!-- Page Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
-            <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">⚡ Keyword Automation Rules</h1>
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <svg class="w-6 h-6 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span>Keyword Automation Rules</span>
+            </h1>
             <p class="text-[13px] text-slate-500 mt-0.5 font-medium">Configure deterministic keyword triggers, exact matches, pattern rules, and default fallbacks for WhatsApp.</p>
         </div>
         <div class="flex items-center gap-2">
@@ -111,8 +114,9 @@
                         <textarea name="reply_text" rows="4" required placeholder="Type the automated response message..." class="w-full text-[12px] px-3 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 shadow-subtle transition-shadow resize-none font-sans"></textarea>
                     </div>
 
-                    <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white text-[12px] font-bold py-2.5 px-4 rounded-lg transition-colors shadow-subtle btn-tactile active:scale-[0.98]">
-                        ⚡ Save Keyword Rule
+                    <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white text-[12px] font-bold py-2.5 px-4 rounded-lg transition-colors shadow-subtle btn-tactile active:scale-[0.98] inline-flex items-center justify-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        <span>Save Keyword Rule</span>
                     </button>
                 </form>
             </div>
