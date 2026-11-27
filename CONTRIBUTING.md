@@ -6,7 +6,7 @@ Thanks for helping improve WhatsApp API Hub.
 
 1. Copy `.env.example` to `.env`.
 2. Start Apache and MySQL in XAMPP.
-3. Import `database.sql`, then run `upgrade.sql`.
+3. Import `schema.sql` (or run migrations via `php scripts/migrate.php`).
 4. Install worker dependencies from `worker/` with `npm install`.
 5. Start the worker with `npm start`.
 
@@ -17,8 +17,8 @@ Thanks for helping improve WhatsApp API Hub.
 - Run PHP syntax checks before opening a PR:
 
 ```powershell
-foreach ($file in Get-ChildItem -Recurse -Filter *.php -File) { php -l $file.FullName }
-node --check worker\server.mjs
+Get-ChildItem -Recurse -Include *.php -File | ForEach-Object { php -l $_.FullName }
+Get-ChildItem -Path worker/*.mjs | ForEach-Object { node --check $_.FullName }
 ```
 
 ## Platform Safety
