@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+$pdo = $pdo ?? Database::pdo();
 $allowNewDevices = (bool) app_config('app.allow_new_devices');
 $isOwner = function_exists('is_owner') ? is_owner($user) : false;
 $restrictedNotice = (string) (app_config('app.restricted_notice') ?: 'This action is not allowed. Please contact your administrator.');

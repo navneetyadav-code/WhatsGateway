@@ -102,12 +102,12 @@ if (isset($_GET['code'])) {
 
         if (!$currentUser || (int) $currentUser['id'] !== $linkUserId) {
             flash('error', 'Session mismatch while linking Google account.');
-            redirect_to('index.php?page=security');
+            redirect_to('index.php?page=settings&tab=security');
         }
 
         link_google_account($linkUserId, $googleId, $email);
         flash('success', "Google account ({$email}) connected successfully.");
-        redirect_to('index.php?page=security');
+        redirect_to('index.php?page=settings&tab=security');
     }
 
     // Case B: Standard Sign-In
