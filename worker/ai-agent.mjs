@@ -557,11 +557,13 @@ async function callGroq(apiKey, model, systemPrompt, userMessage, temperature = 
 }
 
 /**
- * Call OpenRouter API (OpenAI compatible fallback)
+ * Call Custom API (OpenAI Compatible)
  */
-async function callOpenRouter(apiKey, model, systemPrompt, userMessage, temperature = 0.4, maxTokens = 500, conversationHistory = []) {
-  const modelName = model || process.env.DEFAULT_OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
-  const url = 'https://openrouter.ai/api/v1/chat/completions';
+async function callCustomApi(apiKey, model, endpoint, systemPrompt, userMessage, temperature = 0.4, maxTokens = 500, conversationHistory = []) {
+  const modelName = model || process.env.DEFAULT_CUSTOM_MODEL || 'gpt-4o';
+  let baseEndpoint = (endpoint && String(endpoint).trim()) || process.env.DEFAULT_CUSTOM_ENDPOINT || 'https://api.openai.com/v1';
+  baseEndpoint = baseEndpoint.replace(/\/+$/, '');
+  const url = baseEndpoint.endsWith('/chat/completions') ? baseEndpoint : `${baseEndpoint}/chat/completions`;
 
   const messages = ChatMemoryEngine.buildOpenAiMessages(systemPrompt, conversationHistory, userMessage);
 
@@ -572,27 +574,29 @@ async function callOpenRouter(apiKey, model, systemPrompt, userMessage, temperat
     max_tokens: Math.max(Number(maxTokens) || 1200, 800)
   };
 
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  if (apiKey && apiKey.trim()) {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': process.env.APP_PUBLIC_URL || 'https://localhost',
-      'X-Title': process.env.APP_NAME || 'WhatsGateway AI'
-    },
+    headers,
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(20000)
   });
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`OpenRouter API error [${response.status}]: ${errText.slice(0, 200)}`);
+    throw new Error(`Custom API error [${response.status}]: ${errText.slice(0, 200)}`);
   }
 
   const data = await response.json();
   const text = data?.choices?.[0]?.message?.content;
   if (!text) {
-    throw new Error('OpenRouter API returned empty text');
+    throw new Error('Custom API returned empty text');
   }
   return text.trim();
 }

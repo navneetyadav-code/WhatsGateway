@@ -47,6 +47,10 @@ $userRecord = $userStmt->fetch() ?: $user;
 $hasPassword = !empty($userRecord['password_hash']) && !empty($sec['password_set']);
 $isGoogleLinked = !empty($sec['google_linked']);
 $isTotpEnabled = !empty($sec['totp_enabled']);
+$workspaceMode = (string) ($userRecord['workspace_mode'] ?? 'support');
+if (!in_array($workspaceMode, ['personal', 'support', 'api_only'], true)) {
+    $workspaceMode = 'support';
+}
 
 $existingBackupCodesCount = 0;
 if (!empty($sec['backup_codes'])) {

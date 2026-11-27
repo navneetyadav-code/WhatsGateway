@@ -8,9 +8,22 @@ export WORKER_PORT="${WORKER_PORT:-3107}"
 # URL here so PHP cannot accidentally probe the public site or another handler.
 export WORKER_URL="http://127.0.0.1:${WORKER_PORT}"
 
-# Pass all environment variables to Apache mod_php
-echo "PassEnv DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME DB_DSN DB_SSL DB_SSL_CA APP_ENV APP_KEY WORKER_URL WORKER_PORT WORKER_TOKEN DEFAULT_COUNTRY_CODE APP_PUBLIC_URL APP_BASE_PATH" > /etc/apache2/conf-available/render-env.conf
-a2enconf render-env 2>/dev/null || true
+# Pass defined environment variables to Apache mod_php cleanly without AH01506 warnings
+CANDIDATE_VARS="DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME DB_DSN DB_SSL DB_SSL_CA APP_ENV APP_KEY WORKER_URL WORKER_PORT WORKER_TOKEN DEFAULT_COUNTRY_CODE APP_PUBLIC_URL APP_BASE_PATH CUSTOM_API_KEY CUSTOM_MODEL CUSTOM_ENDPOINT GEMINI_API_KEY GROQ_API_KEY ALLOW_GLOBAL_AI_FALLBACK INITIAL_ADMIN_EMAIL INITIAL_ADMIN_PASSWORD INITIAL_ADMIN_NAME"
+ACTIVE_PASS_VARS=""
+for VAR in $CANDIDATE_VARS; do
+    if [ -n "${!VAR+x}" ]; then
+        ACTIVE_PASS_VARS="${ACTIVE_PASS_VARS} ${VAR}"
+    fi
+done
+
+mkdir -p /etc/apache2/conf-available
+if [ -n "${ACTIVE_PASS_VARS}" ]; then
+    echo "PassEnv APP_KEY${ACTIVE_PASS_VARS}" > /etc/apache2/conf-available/render-env.conf
+else
+    echo "PassEnv APP_KEY" > /etc/apache2/conf-available/render-env.conf
+fi
+a2enconf -q render-env 2>/dev/null || true
 
 # Ensure persistent volume mount points exist and are owned by www-data
 mkdir -p /var/www/html/public/uploads /var/www/html/storage/backups /var/www/html/whatsapp-api-data/sessions

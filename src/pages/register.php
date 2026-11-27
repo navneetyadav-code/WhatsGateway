@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             register_user($name, $email, $phone, $password);
             flash('success', 'Account created successfully.');
-            redirect_to('index.php?page=dashboard');
+            redirect_to('index.php?page=onboarding');
         } catch (Throwable $exception) {
             $error = 'That email or phone is already registered.';
         }

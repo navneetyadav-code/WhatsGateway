@@ -32,23 +32,6 @@ $appStorePresets = [
         'rbac_roles' => ['guest', 'customer', 'admin']
     ],
     [
-        'slug' => 'evaluate_math',
-        'title' => 'Precision Math Evaluator',
-        'category' => 'builtin',
-        'category_label' => 'Built-in Utility',
-        'group' => 'Calculations',
-        'icon' => '🧮',
-        'badge_color' => 'emerald',
-        'recommended_mode' => 'Personal & Support',
-        'short_description' => 'Exact mathematical formulas, percentages, and calculations.',
-        'description' => 'Executes exact mathematical calculations, financial formulas, percentages, discounts, and compound interest safely with zero hallucination.',
-        'parameters' => [
-            ['name' => 'expression', 'type' => 'STRING', 'description' => 'Mathematical expression (e.g. "125000 * 0.18" or "sqrt(144)")', 'required' => true]
-        ],
-        'execution_config' => ['handler' => 'evaluate_math'],
-        'rbac_roles' => ['guest', 'customer', 'admin']
-    ],
-    [
         'slug' => 'get_current_time',
         'title' => 'Business Hours & Clock',
         'category' => 'builtin',
@@ -92,9 +75,9 @@ $appStorePresets = [
         'group' => 'Executive Productivity',
         'icon' => '📝',
         'badge_color' => 'violet',
-        'recommended_mode' => 'Personal Assistant (Boss)',
-        'short_description' => 'Drafts formal emails with two-phase boss approval.',
-        'description' => 'Two-phase safety workflow: drafts formal emails, previews recipient and subject, and prompts Boss to approve before dispatching.',
+        'recommended_mode' => 'Personal Assistant',
+        'short_description' => 'Drafts formal emails with two-phase owner approval.',
+        'description' => 'Two-phase safety workflow: drafts formal emails, previews recipient and subject, and prompts the owner to approve before dispatching.',
         'parameters' => [
             ['name' => 'to', 'type' => 'STRING', 'description' => 'Recipient email address', 'required' => true],
             ['name' => 'subject', 'type' => 'STRING', 'description' => 'Subject line of email', 'required' => true],
@@ -112,7 +95,7 @@ $appStorePresets = [
         'group' => 'Executive Productivity',
         'icon' => '✅',
         'badge_color' => 'violet',
-        'recommended_mode' => 'Personal Assistant (Boss)',
+        'recommended_mode' => 'Personal Assistant',
         'short_description' => 'Executes or cancels pending two-phase approval actions.',
         'description' => 'Second phase of Two-Phase Action protocol. Safely dispatches pending approved email drafts or cancels them upon instruction.',
         'parameters' => [
@@ -130,7 +113,7 @@ $appStorePresets = [
         'group' => 'Executive Productivity',
         'icon' => '🧠',
         'badge_color' => 'fuchsia',
-        'recommended_mode' => 'Personal Assistant (Boss)',
+        'recommended_mode' => 'Personal Assistant',
         'short_description' => 'Stores permanent preferences, key facts, and user notes.',
         'description' => 'Stores permanent personal preferences, key facts, project notes, or collaborator contacts permanently in the AI notebook.',
         'parameters' => [
@@ -155,33 +138,6 @@ $appStorePresets = [
             ['name' => 'key', 'type' => 'STRING', 'description' => 'Mnemonic key or topic to forget (e.g. delivery_address, favorite_airline)', 'required' => true]
         ],
         'execution_config' => ['handler' => 'delete_memory'],
-        'rbac_roles' => ['guest', 'customer', 'admin']
-    ],
-    [
-        'slug' => 'send_crm_lead',
-        'title' => 'CRM Lead Outbound Webhook',
-        'category' => 'webhook',
-        'category_label' => 'Outbound Webhook',
-        'group' => 'Integrations',
-        'icon' => '🎣',
-        'badge_color' => 'amber',
-        'recommended_mode' => 'Support & Personal',
-        'short_description' => 'Pushes qualified leads and contacts to CRM webhooks.',
-        'description' => 'Automatically pushes interested customer leads, requirements, and contact phone numbers directly to your Zapier/Make/n8n webhook URL.',
-        'parameters' => [
-            ['name' => 'customer_name', 'type' => 'STRING', 'description' => 'Customer full name', 'required' => true],
-            ['name' => 'customer_phone', 'type' => 'STRING', 'description' => 'Customer phone number', 'required' => true],
-            ['name' => 'requirement', 'type' => 'STRING', 'description' => 'Summary of inquiry or lead requirement', 'required' => true]
-        ],
-        'execution_config' => [
-            'target_url' => 'https://hooks.zapier.com/hooks/catch/sample',
-            'body_template' => [
-                'name' => '{customer_name}',
-                'phone' => '{customer_phone}',
-                'requirement' => '{requirement}',
-                'timestamp' => '{timestamp}'
-            ]
-        ],
         'rbac_roles' => ['guest', 'customer', 'admin']
     ],
     [

@@ -11,9 +11,12 @@ $aiSettings = $aiStmt->fetch() ?: [
     'provider_priority' => 'gemini',
     'gemini_api_key' => '',
     'groq_api_key' => '',
+    'custom_api_key' => '',
     'openrouter_api_key' => '',
     'gemini_model' => 'gemini-3.5-flash',
     'groq_model' => 'openai/gpt-oss-120b',
+    'custom_model' => 'gpt-4o',
+    'custom_endpoint' => 'https://api.openai.com/v1',
     'openrouter_model' => 'meta-llama/llama-3.3-70b-instruct:free',
     'system_prompt' => "You are a friendly, helpful, and professional customer support assistant for our business on WhatsApp. Provide clear, accurate answers grounded in our official company knowledge base. When asked about something not in the knowledge base, politely explain that you don't have that information and offer to connect them to our support team.",
     'temperature' => '0.40',
@@ -27,12 +30,20 @@ $aiSettings = $aiStmt->fetch() ?: [
     'tools_config' => null
 ];
 
+// Map legacy openrouter to custom
+if (($aiSettings['provider_priority'] ?? '') === 'openrouter') {
+    $aiSettings['provider_priority'] = 'custom';
+}
+
 // Clean up any legacy asterisks from display
 if (($aiSettings['gemini_api_key'] ?? '') === '********') {
     $aiSettings['gemini_api_key'] = '';
 }
 if (($aiSettings['groq_api_key'] ?? '') === '********') {
     $aiSettings['groq_api_key'] = '';
+}
+if (($aiSettings['custom_api_key'] ?? '') === '********') {
+    $aiSettings['custom_api_key'] = '';
 }
 if (($aiSettings['openrouter_api_key'] ?? '') === '********') {
     $aiSettings['openrouter_api_key'] = '';

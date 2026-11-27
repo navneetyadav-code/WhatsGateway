@@ -40,8 +40,8 @@ export class ChatMemoryEngine {
       params.push(Number(ttlMinutes));
     }
 
-    query += ' ORDER BY id DESC LIMIT ?';
-    params.push(Math.max(2, Math.min(Number(maxTurns) || 16, 30)));
+    const safeTurns = Math.max(2, Math.min(parseInt(maxTurns, 10) || 16, 30));
+    query += ` ORDER BY id DESC LIMIT ${safeTurns}`;
 
     try {
       const [rows] = await db.execute(query, params);

@@ -1740,7 +1740,7 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
               // Auto-seed default ai_agent_settings row in DB for this user
               await db.execute(
                 `INSERT INTO ai_agent_settings (user_id, enabled, auto_reply_enabled, provider_priority, agent_mode, owner_name)
-                 VALUES (?, 1, 1, 'gemini', 'support', 'Boss')
+                 SELECT id, 1, 1, 'gemini', 'support', COALESCE(NULLIF(TRIM(name), ''), 'Boss') FROM users WHERE id = ?
                  ON DUPLICATE KEY UPDATE enabled = 1, auto_reply_enabled = 1`,
                 [userId]
               );
@@ -1769,7 +1769,7 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
           // Fetch user-isolated keys from ai_provider_keys table
           try {
             const [pKeys] = await db.execute(
-              'SELECT provider, api_key, model FROM ai_provider_keys WHERE user_id = ? AND is_active = 1 ORDER BY priority ASC, id ASC',
+              'SELECT provider, api_key, model, endpoint FROM ai_provider_keys WHERE user_id = ? AND is_active = 1 ORDER BY priority ASC, id ASC',
               [userId]
             );
             if (pKeys && pKeys.length > 0) {
@@ -1782,9 +1782,10 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                 } else if (prov === 'groq' && !aiSettings.groq_api_key && decryptedKey) {
                   aiSettings.groq_api_key = decryptedKey;
                   if (pk.model) aiSettings.groq_model = pk.model;
-                } else if (prov === 'openrouter' && !aiSettings.openrouter_api_key && decryptedKey) {
-                  aiSettings.openrouter_api_key = decryptedKey;
-                  if (pk.model) aiSettings.openrouter_model = pk.model;
+                } else if ((prov === 'custom' || prov === 'openrouter') && !aiSettings.custom_api_key && decryptedKey) {
+                  aiSettings.custom_api_key = decryptedKey;
+                  if (pk.model) aiSettings.custom_model = pk.model;
+                  if (pk.endpoint) aiSettings.custom_endpoint = pk.endpoint;
                 }
               }
             }
@@ -1802,8 +1803,10 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
           if (canUseGlobalAiFallback && !aiSettings.groq_api_key && process.env.GROQ_API_KEY) {
             aiSettings.groq_api_key = process.env.GROQ_API_KEY;
           }
-          if (canUseGlobalAiFallback && !aiSettings.openrouter_api_key && process.env.OPENROUTER_API_KEY) {
-            aiSettings.openrouter_api_key = process.env.OPENROUTER_API_KEY;
+          if (canUseGlobalAiFallback && !aiSettings.custom_api_key && (process.env.CUSTOM_API_KEY || process.env.OPENROUTER_API_KEY)) {
+            aiSettings.custom_api_key = process.env.CUSTOM_API_KEY || process.env.OPENROUTER_API_KEY;
+            if (process.env.CUSTOM_MODEL) aiSettings.custom_model = process.env.CUSTOM_MODEL;
+            if (process.env.CUSTOM_ENDPOINT) aiSettings.custom_endpoint = process.env.CUSTOM_ENDPOINT;
           }
           const isPersonalMode = aiSettings?.agent_mode === 'personal';
           const ownerName = aiSettings?.owner_name || 'Boss';
@@ -1958,7 +1961,7 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
           if (!feedbackHandled && isBotPaused !== 1 && convStatus === 'open') {
             if (rawInboundText) {
               try {
-                if (aiSettings && (aiSettings.gemini_api_key || aiSettings.groq_api_key || aiSettings.openrouter_api_key)) {
+                if (aiSettings && (aiSettings.gemini_api_key || aiSettings.groq_api_key || aiSettings.custom_api_key || aiSettings.openrouter_api_key)) {
                   const [convCheck] = await db.execute(
                     'SELECT id, session_uuid, consecutive_bot_replies, status, bot_paused FROM chat_conversations WHERE user_id = ? AND phone = ? LIMIT 1',
                     [userId, senderPhone]
@@ -2087,9 +2090,14 @@ function normalizeInboundMessage(userId, msg, session = {}, resolvedSenderPhone 
                             });
                             const contactName = conv.contact_name || msg.pushName || 'User';
 
-                            const activeSystemPrompt = (isPersonalMode && toolsConfig?.personal_system_prompt)
-                              ? toolsConfig.personal_system_prompt
-                              : aiSettings.system_prompt;
+                            let activeSystemPrompt = aiSettings.system_prompt;
+                            if (isPersonalMode) {
+                              const pPrompt = (toolsConfig?.personal_system_prompt || '').trim();
+                              const isLegacySupport = pPrompt.toLowerCase().includes('customer support assistant') || pPrompt.toLowerCase().includes('company knowledge base');
+                              activeSystemPrompt = (!pPrompt || isLegacySupport)
+                                ? `You are the Executive Chief of Staff and Personal AI Assistant to ${aiSettings.owner_name || 'the owner'}. Proactively manage daily schedules, triage priority communications, coordinate outbound correspondence, and execute connected tools with high precision. Keep briefings concise, structured, and action-oriented.`
+                                : pPrompt;
+                            }
                             const activeInternalPrompt = isPersonalMode
                               ? toolsConfig?.personal_internal_prompt
                               : toolsConfig?.support_internal_prompt;
@@ -2896,9 +2904,8 @@ async function processWebhookQueueOnce() {
         `SELECT * FROM webhook_queue
          WHERE status = 'queued' AND available_at <= NOW()
          ORDER BY id ASC
-         LIMIT ?
-         FOR UPDATE SKIP LOCKED`,
-        [availableSlots]
+         LIMIT ${availableSlots}
+         FOR UPDATE SKIP LOCKED`
       );
 
       if (rows && rows.length > 0) {

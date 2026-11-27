@@ -18,7 +18,22 @@ function migrationSafeError(Throwable $error): string
 
 function migrationRun(): void
 {
-    $pdo = Database::pdo();
+    $pdo = null;
+    $maxAttempts = 15;
+    $attempt = 0;
+    while ($attempt < $maxAttempts) {
+        $attempt++;
+        try {
+            $pdo = Database::pdo();
+            break;
+        } catch (Throwable $e) {
+            if ($attempt >= $maxAttempts) {
+                throw $e;
+            }
+            fwrite(STDOUT, "[database-init] Database connection attempt {$attempt}/{$maxAttempts} waiting for readiness...\n");
+            sleep(2);
+        }
+    }
     $database = (string) $pdo->query('SELECT DATABASE()')->fetchColumn();
     if ($database === '') {
         throw new RuntimeException('Database initialization refused: no database selected.');

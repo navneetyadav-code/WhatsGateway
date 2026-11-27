@@ -15,6 +15,9 @@ verify_api_csrf();
 $input = json_decode(file_get_contents('php://input'), true) ?? [];
 $id = !empty($input['id']) ? (int) $input['id'] : null;
 $provider = trim((string) ($input['provider'] ?? ''));
+if ($provider === 'openrouter') {
+    $provider = 'custom';
+}
 $apiKey = trim((string) ($input['api_key'] ?? ''));
 
 $pdo = Database::pdo();
@@ -22,13 +25,16 @@ $userId = (int) $user['id'];
 
 // If ID is provided, look up saved key and its customized model
 $keyModel = null;
+$keyEndpoint = null;
 if ($id !== null) {
-    $stmt = $pdo->prepare('SELECT id, provider, api_key, label, model FROM ai_provider_keys WHERE id = ? AND user_id = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, provider, api_key, label, model, endpoint FROM ai_provider_keys WHERE id = ? AND user_id = ? LIMIT 1');
     $stmt->execute([$id, $userId]);
     $keyRow = $stmt->fetch();
     if ($keyRow) {
-        $provider = (string) $keyRow['provider'];
+        $rowProv = (string) $keyRow['provider'];
+        $provider = ($rowProv === 'openrouter') ? 'custom' : $rowProv;
         $keyModel = !empty($keyRow['model']) ? trim((string) $keyRow['model']) : null;
+        $keyEndpoint = !empty($keyRow['endpoint']) ? trim((string) $keyRow['endpoint']) : null;
         if ($apiKey === '') {
             $apiKey = decrypt_credential((string) $keyRow['api_key']);
         }
@@ -40,13 +46,13 @@ if ($apiKey === '') {
     exit;
 }
 
-if (!in_array($provider, ['gemini', 'groq', 'openrouter'], true)) {
-    json_response(['ok' => false, 'error' => 'Invalid AI provider.'], 422);
+if (!in_array($provider, ['gemini', 'groq', 'custom'], true)) {
+    json_response(['ok' => false, 'error' => 'Invalid AI provider. Supported: gemini, groq, custom.'], 422);
     exit;
 }
 
 // Fetch user's configured models dynamically from backend database
-$settingsStmt = $pdo->prepare('SELECT gemini_model, groq_model, openrouter_model FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
+$settingsStmt = $pdo->prepare('SELECT gemini_model, groq_model, custom_model, custom_endpoint, openrouter_model FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
 $settingsStmt->execute([$userId]);
 $aiSettings = $settingsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
@@ -56,11 +62,14 @@ if ($model === '' && $keyModel !== null) {
 }
 if ($model === '') {
     if ($provider === 'gemini') {
-        $model = trim((string) ($aiSettings['gemini_model'] ?? ''));
+        $model = trim((string) ($aiSettings['gemini_model'] ?? 'gemini-3.5-flash'));
     } elseif ($provider === 'groq') {
-        $model = trim((string) ($aiSettings['groq_model'] ?? ''));
-    } elseif ($provider === 'openrouter') {
-        $model = trim((string) ($aiSettings['openrouter_model'] ?? ''));
+        $model = trim((string) ($aiSettings['groq_model'] ?? 'openai/gpt-oss-120b'));
+    } elseif ($provider === 'custom') {
+        $model = trim((string) ($aiSettings['custom_model'] ?? ($aiSettings['openrouter_model'] ?? '')));
+        if ($model === '') {
+            $model = 'gpt-4o';
+        }
     }
 }
 
@@ -115,8 +124,17 @@ if ($provider === 'gemini') {
         'Content-Type: application/json',
         'Authorization: Bearer ' . trim($apiKey)
     ]);
-} elseif ($provider === 'openrouter') {
-    $url = 'https://openrouter.ai/api/v1/chat/completions';
+} elseif ($provider === 'custom') {
+    $endpoint = trim((string) ($keyEndpoint ?: ($input['endpoint'] ?? ($aiSettings['custom_endpoint'] ?? 'https://api.openai.com/v1'))));
+    if ($endpoint === '') {
+        $endpoint = 'https://api.openai.com/v1';
+    }
+    $endpoint = rtrim($endpoint, '/');
+    if (!str_ends_with($endpoint, '/chat/completions')) {
+        $url = $endpoint . '/chat/completions';
+    } else {
+        $url = $endpoint;
+    }
     $payload = json_encode([
         'model' => $model,
         'messages' => [['role' => 'user', 'content' => 'ping']],
@@ -127,9 +145,7 @@ if ($provider === 'gemini') {
     curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'Content-Type: application/json',
-        'Authorization: Bearer ' . trim($apiKey),
-        'HTTP-Referer: ' . (app_config('app.public_url') ?: 'https://localhost'),
-        'X-Title: ' . (app_config('app.name') ?: 'WhatsGateway') . ' AI Key Test'
+        'Authorization: Bearer ' . trim($apiKey)
     ]);
 }
 
@@ -149,11 +165,18 @@ if (!$isSuccess) {
     } else {
         $decoded = json_decode($responseBody, true);
         if ($provider === 'gemini') {
-            $errorMessage = $decoded['error']['message'] ?? "Gemini API error [HTTP {$httpCode}]";
-        } elseif ($provider === 'groq' || $provider === 'openrouter') {
-            $errorMessage = $decoded['error']['message'] ?? "API error [HTTP {$httpCode}]";
-        } else {
-            $errorMessage = "HTTP {$httpCode}: " . substr(strip_tags($responseBody), 0, 150);
+            $errorMessage = $decoded['error']['message'] ?? null;
+        } elseif ($provider === 'groq' || $provider === 'custom' || $provider === 'openrouter') {
+            $errorMessage = $decoded['error']['message'] ?? ($decoded['error'] ?? ($decoded['detail'] ?? ($decoded['message'] ?? null)));
+            if (is_array($errorMessage)) {
+                $errorMessage = json_encode($errorMessage);
+            }
+        }
+        if (!$errorMessage) {
+            $cleanBody = preg_replace('/<style\b[^>]*>(.*?)<\/style>/is', '', $responseBody);
+            $cleanBody = preg_replace('/<script\b[^>]*>(.*?)<\/script>/is', '', $cleanBody);
+            $cleanBody = trim(preg_replace('/\s+/', ' ', strip_tags($cleanBody)));
+            $errorMessage = "HTTP {$httpCode}: " . ($cleanBody !== '' ? substr($cleanBody, 0, 160) : 'Server returned an error');
         }
     }
 }

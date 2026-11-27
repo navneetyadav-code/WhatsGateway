@@ -7,7 +7,7 @@ $pdo = Database::pdo();
 
 // 1. Fetch AI Provider Keys grouped by provider, ordered by priority ASC, id ASC
 $keysStmt = $pdo->prepare(
-    'SELECT id, provider, label, api_key, model, priority, is_active, status, fail_count, last_used_at, last_error, updated_at
+    'SELECT id, provider, label, api_key, model, endpoint, priority, is_active, status, fail_count, last_used_at, last_error, updated_at
      FROM ai_provider_keys
      WHERE user_id = ?
      ORDER BY provider ASC, priority ASC, id ASC'
@@ -17,18 +17,20 @@ $allKeys = $keysStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $geminiKeys = [];
 $groqKeys = [];
-$openrouterKeys = [];
+$customKeys = [];
 
-foreach ($allKeys as $k) {
+foreach ($allKeys as &$k) {
     $k['api_key'] = decrypt_credential((string) $k['api_key']);
     if ($k['provider'] === 'gemini') {
         $geminiKeys[] = $k;
     } elseif ($k['provider'] === 'groq') {
         $groqKeys[] = $k;
-    } elseif ($k['provider'] === 'openrouter') {
-        $openrouterKeys[] = $k;
+    } elseif ($k['provider'] === 'custom' || $k['provider'] === 'openrouter') {
+        $k['provider'] = 'custom';
+        $customKeys[] = $k;
     }
 }
+unset($k);
 
 // 2. Fetch User Isolated SMTP Credentials
 $smtpStmt = $pdo->prepare(
@@ -46,7 +48,7 @@ unset($s);
 
 // 3. Fetch AI Agent Settings (for Provider Priority and Agent Mode context)
 $aiStmt = $pdo->prepare(
-    'SELECT provider_priority, gemini_model, groq_model, openrouter_model, agent_mode, owner_name, enabled, auto_reply_enabled
+    'SELECT provider_priority, gemini_model, groq_model, custom_model, custom_endpoint, openrouter_model, agent_mode, owner_name, enabled, auto_reply_enabled
      FROM ai_agent_settings
      WHERE user_id = ? LIMIT 1'
 );
@@ -55,9 +57,11 @@ $aiSettings = $aiStmt->fetch(PDO::FETCH_ASSOC) ?: [
     'provider_priority' => 'gemini',
     'gemini_model' => '',
     'groq_model' => '',
+    'custom_model' => 'gpt-4o',
+    'custom_endpoint' => 'https://api.openai.com/v1',
     'openrouter_model' => '',
-    'agent_mode' => 'support',
-    'owner_name' => 'Boss',
+    'agent_mode' => 'personal',
+    'owner_name' => trim((string)($user['name'] ?? 'Boss')) ?: 'Boss',
     'enabled' => 1,
     'auto_reply_enabled' => 1
 ];

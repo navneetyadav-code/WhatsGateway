@@ -24,13 +24,25 @@ declare(strict_types=1);
 $user = $user ?? require_auth();
 $pdo = Database::pdo();
 $agentMode = 'support';
+$workspaceMode = (string) ($user['workspace_mode'] ?? '');
 try {
     $modeStmt = $pdo->prepare('SELECT agent_mode FROM ai_agent_settings WHERE user_id = ? LIMIT 1');
     $modeStmt->execute([(int) $user['id']]);
     $agentMode = (string) ($modeStmt->fetchColumn() ?: 'support');
 } catch (\Throwable $e) {}
-$isPersonalMode = ($agentMode === 'personal');
+if ($workspaceMode === '') {
+    $workspaceMode = ($agentMode === 'personal') ? 'personal' : 'support';
+}
+$isPersonalMode = ($workspaceMode === 'personal');
+$isApiOnly = ($workspaceMode === 'api_only');
+$isSupportMode = ($workspaceMode === 'support');
 $section = (string) ($page ?? ($_GET['page'] ?? 'dashboard'));
+
+// REST API & Webhooks Only Guard: Redirect away if user visits AI or live chat pages
+if ($isApiOnly && in_array($section, ['live-chat', 'chatbot', 'ai-agent', 'support-bot', 'personal-assistant', 'knowledge', 'escalations', 'feedback', 'rules', 'tools', 'memory', 'app-store', 'presets', 'ai-credentials', 'ai-keys', 'campaigns'], true)) {
+    flash('info', 'AI Agent Studio and Live Chat are disabled in REST API & Webhooks mode. You can switch your workspace mode in Settings.');
+    redirect_to('index.php?page=api-keys');
+}
 
 // Personal Assistant Mode Guard: Redirect away if user directly visits Support Bot pages
 if ($isPersonalMode && in_array($section, ['live-chat', 'knowledge', 'escalations'], true)) {

@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS `ai_provider_keys` (
   `user_id` bigint(20) unsigned NOT NULL,
   `provider` enum('gemini', 'groq', 'openrouter') NOT NULL,
   `label` varchar(100) NOT NULL DEFAULT 'Primary Key',
+  `model` varchar(120) DEFAULT NULL,
+  `endpoint` varchar(255) DEFAULT NULL,
   `api_key` text NOT NULL,
   `priority` int(10) unsigned NOT NULL DEFAULT 1,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,

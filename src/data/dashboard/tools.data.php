@@ -84,17 +84,18 @@ if (!empty($aiRow['groq_api_key'])) {
         ];
     }
 }
-if (!empty($aiRow['openrouter_api_key'])) {
-    $hasDbOpenRouter = false;
+$customLegacyKey = !empty($aiRow['custom_api_key']) ? $aiRow['custom_api_key'] : (!empty($aiRow['openrouter_api_key']) ? $aiRow['openrouter_api_key'] : null);
+if (!empty($customLegacyKey)) {
+    $hasDbCustom = false;
     foreach ($userAiKeys as $uk) {
-        if ($uk['provider'] === 'openrouter') { $hasDbOpenRouter = true; break; }
+        if ($uk['provider'] === 'custom' || $uk['provider'] === 'openrouter') { $hasDbCustom = true; break; }
     }
-    if (!$hasDbOpenRouter) {
+    if (!$hasDbCustom) {
         $legacyAiKeys[] = [
-            'id' => 'legacy_openrouter',
-            'provider' => 'openrouter',
-            'label' => 'Legacy OpenRouter Key',
-            'model' => $aiRow['openrouter_model'] ?: (config_env('DEFAULT_OPENROUTER_MODEL') ?: 'meta-llama/llama-3.3-70b-instruct'),
+            'id' => 'legacy_custom',
+            'provider' => 'custom',
+            'label' => 'Legacy Custom API Key',
+            'model' => $aiRow['custom_model'] ?: ($aiRow['openrouter_model'] ?: 'gpt-4o'),
             'priority' => 99,
             'is_active' => 1,
             'status' => 'active'

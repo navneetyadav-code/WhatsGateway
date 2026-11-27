@@ -63,6 +63,85 @@ declare(strict_types=1);
     <!-- ==================================================================== -->
     <?php if ($activeTab === 'session'): ?>
     <div class="space-y-5">
+        <!-- Workspace Mode Selection Card -->
+        <section class="bg-white rounded-xl border border-slate-200/80 shadow-card overflow-hidden">
+            <div class="px-4 py-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 bg-slate-50/50">
+                <div>
+                    <h2 class="text-[13px] font-bold text-slate-900 tracking-tight">Workspace Mode</h2>
+                    <p class="text-[11px] text-slate-500 mt-0.5">Customize your navigation and gateway features according to your use case.</p>
+                </div>
+                <span class="self-start sm:self-auto px-2 py-0.5 text-[10px] font-semibold rounded-full border shadow-subtle <?= $workspaceMode === 'api_only' ? 'bg-sky-50 text-sky-700 border-sky-200' : ($workspaceMode === 'personal' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200') ?>">
+                    Active: <?= $workspaceMode === 'api_only' ? 'REST API & Webhooks' : ($workspaceMode === 'personal' ? 'Personal Assistant' : 'Customer Support') ?>
+                </span>
+            </div>
+
+            <form method="post" action="<?= e(base_url('index.php?page=settings-workspace-mode')) ?>" class="p-4 sm:p-5 space-y-4">
+                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                    <!-- Option 1: REST API & Webhooks Only -->
+                    <label class="relative flex flex-col p-4 rounded-xl border-2 transition-all cursor-pointer <?= $workspaceMode === 'api_only' ? 'border-sky-600 bg-sky-50/20 shadow-sm ring-1 ring-sky-600/20' : 'border-slate-200 hover:border-slate-300 bg-white' ?>">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <input type="radio" name="workspace_mode" value="api_only" <?= $workspaceMode === 'api_only' ? 'checked' : '' ?> class="h-4 w-4 text-sky-600 border-slate-300 focus:ring-sky-500 cursor-pointer">
+                                <div>
+                                    <span class="text-[13px] font-bold text-slate-900">REST API & Webhooks</span>
+                                </div>
+                            </div>
+                            <div class="w-7 h-7 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-slate-600 mt-2.5 leading-relaxed">
+                            Pure developer gateway. Zero AI overhead. Streamlined navigation focused on API keys, webhooks, and message logs.
+                        </p>
+                    </label>
+
+                    <!-- Option 2: Personal AI Assistant -->
+                    <label class="relative flex flex-col p-4 rounded-xl border-2 transition-all cursor-pointer <?= $workspaceMode === 'personal' ? 'border-purple-600 bg-purple-50/20 shadow-sm ring-1 ring-purple-600/20' : 'border-slate-200 hover:border-slate-300 bg-white' ?>">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <input type="radio" name="workspace_mode" value="personal" <?= $workspaceMode === 'personal' ? 'checked' : '' ?> class="h-4 w-4 text-purple-600 border-slate-300 focus:ring-purple-500 cursor-pointer">
+                                <div>
+                                    <span class="text-[13px] font-bold text-slate-900">Personal Assistant</span>
+                                </div>
+                            </div>
+                            <div class="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-slate-600 mt-2.5 leading-relaxed">
+                            Private assistant for scheduling, reminders, personal tools, and memory on your personal WhatsApp number.
+                        </p>
+                    </label>
+
+                    <!-- Option 3: Customer Support Agent -->
+                    <label class="relative flex flex-col p-4 rounded-xl border-2 transition-all cursor-pointer <?= $workspaceMode === 'support' ? 'border-emerald-600 bg-emerald-50/20 shadow-sm ring-1 ring-emerald-600/20' : 'border-slate-200 hover:border-slate-300 bg-white' ?>">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <input type="radio" name="workspace_mode" value="support" <?= $workspaceMode === 'support' ? 'checked' : '' ?> class="h-4 w-4 text-emerald-600 border-slate-300 focus:ring-emerald-500 cursor-pointer">
+                                <div>
+                                    <span class="text-[13px] font-bold text-slate-900">Customer Support</span>
+                                </div>
+                            </div>
+                            <div class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"></path></svg>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-slate-600 mt-2.5 leading-relaxed">
+                            Full business suite with automated customer replies, live chat inbox, knowledge base (RAG), and human escalation alarms.
+                        </p>
+                    </label>
+                </div>
+
+                <div class="pt-2 flex justify-end">
+                    <button type="submit" class="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg shadow-subtle transition-colors cursor-pointer">
+                        Update Workspace Mode
+                    </button>
+                </div>
+            </form>
+        </section>
+
         <!-- Storage Driver Selection Card -->
         <section class="bg-white rounded-xl border border-slate-200/80 shadow-card overflow-hidden">
             <div class="px-4 py-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 bg-slate-50/50">

@@ -295,8 +295,14 @@
                 </div>
 
                 <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                    <span class="text-slate-400 font-medium"><?= !empty($isPersonalMode) ? 'Personal Assistant Studio:' : 'Interactive live chat:' ?></span>
-                    <?php if (!empty($isPersonalMode)): ?>
+                    <span class="text-slate-400 font-medium">
+                        <?= !empty($isApiOnly) ? 'API Keys & Gateway:' : (!empty($isPersonalMode) ? 'Personal Assistant Studio:' : 'Interactive live chat:') ?>
+                    </span>
+                    <?php if (!empty($isApiOnly)): ?>
+                        <a href="<?= e(base_url('index.php?page=api-keys')) ?>" class="font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 transition-colors">
+                            Manage API Keys &rarr;
+                        </a>
+                    <?php elseif (!empty($isPersonalMode)): ?>
                         <a href="<?= e(base_url('index.php?page=chatbot')) ?>" class="font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 transition-colors">
                             Manage Assistant &rarr;
                         </a>

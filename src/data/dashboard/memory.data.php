@@ -17,9 +17,12 @@ try {
     $modeStmt->execute([$userId]);
     $agentSettings = $modeStmt->fetch() ?: [];
     $agentMode = (string) ($agentSettings['agent_mode'] ?? 'support');
-    $ownerName = (string) ($agentSettings['owner_name'] ?? 'Boss');
+    $ownerName = trim((string) ($agentSettings['owner_name'] ?? ''));
+    if ($ownerName === '' || $ownerName === 'Boss') {
+        $ownerName = trim((string) ($user['name'] ?? 'Boss')) ?: 'Boss';
+    }
 } catch (\Throwable $e) {
-    $ownerName = 'Boss';
+    $ownerName = trim((string) ($user['name'] ?? 'Boss')) ?: 'Boss';
 }
 
 // 3. Load All Memories with Performance Counts
